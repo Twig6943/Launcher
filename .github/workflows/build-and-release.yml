@@ -37,7 +37,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: cypress_${{ matrix.game }}
-          path: Server/build/cypress_${{ matrix.game }}.dll
+          path: Server/build/Release/cypress_${{ matrix.game }}.dll
 
   launcher:
     needs: server
