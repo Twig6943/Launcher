@@ -2,6 +2,14 @@ name: Build & Release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag (example: 1.0.0)
+        required: false
+      prerelease:
+        description: Mark as prerelease
+        required: false
+        default: "false"
   pull_request:
     branches: [main]
 
@@ -55,7 +63,7 @@ jobs:
           choco install dotnet-8.0-sdk -y
 
       - name: Download server DLLs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: publish/CypressLauncher
           merge-multiple: true
@@ -76,23 +84,25 @@ jobs:
           }
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: Cypress
           path: publish/CypressLauncher
 
       - name: Create release archive
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != ''
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
+          $tag = "${{ github.event.inputs.release_tag }}"
           Compress-Archive -Path "publish/CypressLauncher/*" -DestinationPath "Cypress-$tag.zip"
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.release_tag }}
+          name: ${{ github.event.inputs.release_tag }}
           files: Cypress-*.zip
           generate_release_notes: true
           draft: false
-          prerelease: false
+          prerelease: ${{ github.event.inputs.prerelease }}

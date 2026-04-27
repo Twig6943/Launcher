@@ -33,7 +33,7 @@ jobs:
           cmake --build build --config Release
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: cypress_${{ matrix.game }}
           path: Server/build/Release/cypress_${{ matrix.game }}.dll
