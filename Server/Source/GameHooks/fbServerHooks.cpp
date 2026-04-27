@@ -25,6 +25,38 @@ static constexpr int MAX_NAME_LENGTH = 32;
 static constexpr int MAX_NAME_LENGTH = 16;
 #endif
 
+// raw byte check before we touch the name as a std::string
+static bool IsNameSafeRaw(const char* s)
+{
+	if (!s)
+		return false;
+	int len = 0;
+	for (const char* p = s; *p; ++p)
+	{
+		unsigned char c = (unsigned char)*p;
+		if (c < 0x20 || c >= 0x7F)
+			return false;
+		if (++len > MAX_NAME_LENGTH)
+			return false;
+	}
+	return len > 0;
+}
+
+// strip non-ascii so fmt doesnt throw on garbage names
+static std::string SanitizeForLog(const char* s)
+{
+	std::string out;
+	for (const char* p = s; *p && (p - s) < 64; ++p)
+	{
+		unsigned char c = (unsigned char)*p;
+		if (c >= 0x20 && c < 0x7F)
+			out += (char)c;
+		else
+			out += '?';
+	}
+	return out;
+}
+
 static const std::vector<std::string>& GetSlurList()
 {
 	static const std::vector<std::string> slurs = {
@@ -463,6 +495,24 @@ DEFINE_HOOK(
 {
 	const char* playerName = reinterpret_cast<const char*>(reinterpret_cast<uintptr_t>(msg) + 0x6C);
 
+		try
+	{
+		// reject garbage bytes before constructing any strings
+		if (!IsNameSafeRaw(playerName))
+		{
+			thisPtr->disconnect(fb::SecureReason_KickedOut, "Invalid name");
+			return nullptr;
+		}
+
+		// validate name first before touching anything else
+		std::string nameRejectReason;
+		if (!IsNameValid(playerName, nameRejectReason))
+		{
+			CYPRESS_LOGTOSERVER(LogLevel::Warning, "Kicking {} - {}", playerName, nameRejectReason);
+			thisPtr->disconnect(fb::SecureReason_KickedOut, nameRejectReason.c_str());
+			return nullptr;
+		}
+
 	// grab fingerprint from side channel if they connected, or from hw cache if they connected before
 	const Cypress::HardwareFingerprint* fp = nullptr;
 	std::string hwid;
@@ -518,22 +568,16 @@ DEFINE_HOOK(
 		thisPtr->disconnect(fb::SecureReason_KickedOut, "Invalid Characters in Username");
 	}
 
-	std::string nameRejectReason;
-	if (!IsNameValid(playerName, nameRejectReason))
-	{
-		CYPRESS_LOGTOSERVER(LogLevel::Warning, "Kicking {} - {}", playerName, nameRejectReason);
-		thisPtr->disconnect(fb::SecureReason_KickedOut, nameRejectReason.c_str());
-	}
-
-	auto* gc = fb::ServerGameContext::GetInstance();
-	if (gc && gc->m_serverPlayerManager && gc->m_serverPlayerManager->findHumanByName(playerName))
-	{
-		CYPRESS_LOGTOSERVER(LogLevel::Warning, "Kicking {} - name already in use", playerName);
-		thisPtr->disconnect(fb::SecureReason_KickedOut, "Name already in use");
-	}
 
 	CYPRESS_LOGTOSERVER(LogLevel::Info, "{} is trying to join from machine {}", playerName, thisPtr->m_machineId.c_str());
 	return Orig_fb_ServerConnection_onCreatePlayerMsg(thisPtr, msg);
+
+	}
+	catch (...)
+	{
+		thisPtr->disconnect(fb::SecureReason_KickedOut, "Internal error");
+		return nullptr;
+	}
 }
 #else
 DEFINE_HOOK(
@@ -546,6 +590,28 @@ DEFINE_HOOK(
 )
 {
 	const char* playerName = ptrread<const char*>(msg, 0x48);
+
+		try
+	{
+		// reject garbage bytes before constructing any strings
+		if (!IsNameSafeRaw(playerName))
+		{
+			thisPtr->m_shouldDisconnect = true;
+			thisPtr->m_disconnectReason = 0x4;
+			thisPtr->m_reasonText = "Invalid name";
+			return nullptr;
+		}
+
+		// validate name first before touching anything else
+		std::string nameRejectReason;
+		if (!IsNameValid(playerName, nameRejectReason))
+		{
+			CYPRESS_LOGTOSERVER(LogLevel::Warning, "Kicking {} - {}", playerName, nameRejectReason);
+			thisPtr->m_shouldDisconnect = true;
+			thisPtr->m_disconnectReason = 0x4;
+			thisPtr->m_reasonText = nameRejectReason.c_str();
+			return nullptr;
+		}
 
 	// grab fingerprint from side channel if they connected, or from hw cache if they connected before
 	const Cypress::HardwareFingerprint* fp = nullptr;
@@ -601,15 +667,6 @@ DEFINE_HOOK(
 		}
 	}
 
-	std::string nameRejectReason;
-	if (!IsNameValid(playerName, nameRejectReason))
-	{
-		CYPRESS_LOGTOSERVER(LogLevel::Warning, "Kicking {} - {}", playerName, nameRejectReason);
-		thisPtr->m_shouldDisconnect = true;
-		thisPtr->m_disconnectReason = 0x4;
-		thisPtr->m_reasonText = nameRejectReason.c_str();
-	}
-
 	auto* gc = fb::ServerGameContext::GetInstance();
 	if (gc && gc->m_serverPlayerManager && gc->m_serverPlayerManager->findHumanByName(playerName))
 	{
@@ -621,6 +678,14 @@ DEFINE_HOOK(
 
 	CYPRESS_LOGTOSERVER(LogLevel::Info, "{} is trying to join from machine {}", playerName, thisPtr->m_machineId.c_str());
 	return Orig_fb_ServerConnection_onCreatePlayerMsg(thisPtr, msg);
+	}
+	catch (...)
+	{
+		thisPtr->m_shouldDisconnect = true;
+		thisPtr->m_disconnectReason = 0x4;
+		thisPtr->m_reasonText = "Internal error";
+		return nullptr;
+	}
 }
 #endif
 
