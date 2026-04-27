@@ -127,6 +127,13 @@ public partial class MessageHandler
 		string hostConnectionMode = ((string?)msg["hostConnectionMode"]) ?? "Direct";
 		string hostRelayAddress = ((string?)msg["hostRelayAddress"]) ?? "";
 		string hostRelayKey = ((string?)msg["hostRelayKey"]) ?? "";
+
+		// default relay address when mode is Relay but address is empty
+		if (string.Equals(hostConnectionMode, "Relay", StringComparison.OrdinalIgnoreCase)
+			&& string.IsNullOrWhiteSpace(hostRelayAddress))
+		{
+			hostRelayAddress = "relay.v0e.dev:25200";
+		}
 		string level = ((string?)msg["level"]) ?? "";
 		string inclusion = ((string?)msg["inclusion"]) ?? "";
 		string startPoint = ((string?)msg["startPoint"]) ?? "";

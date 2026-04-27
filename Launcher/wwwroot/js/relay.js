@@ -186,8 +186,13 @@ function requestRelayLeaseAndStart() {
     if (typeof getMotdRaw === 'function') motd = getMotdRaw();
     var serverName = motd || (getGame() + ' Server');
     document.getElementById('hostRelayServerName').value = serverName;
+    var addr = document.getElementById('hostRelayAddress').value;
+    if (!addr) {
+        addr = 'relay.v0e.dev:25200';
+        document.getElementById('hostRelayAddress').value = addr;
+    }
     send('getRelayLease', {
-        relayAddress: document.getElementById('hostRelayAddress').value,
+        relayAddress: addr,
         relayServerName: serverName,
         game: getGame()
     });
@@ -195,8 +200,13 @@ function requestRelayLeaseAndStart() {
 }
 
 function requestRelayLease() {
+    var addr = document.getElementById('hostRelayAddress').value;
+    if (!addr) {
+        addr = 'relay.v0e.dev:25200';
+        document.getElementById('hostRelayAddress').value = addr;
+    }
     send('getRelayLease', {
-        relayAddress: document.getElementById('hostRelayAddress').value,
+        relayAddress: addr,
         relayServerName: document.getElementById('hostRelayServerName').value,
         game: getGame()
     });

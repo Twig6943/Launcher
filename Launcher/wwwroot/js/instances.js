@@ -221,22 +221,16 @@ function onInstanceOutput(pid, line) {
             if (!inst.sideChannelPeers) inst.sideChannelPeers = {};
             const extra = (parsed.extra || '').split('|');
             const role = extra[0] || 'player';
-            const hwid = extra[1] || '';
-            const components = parsed.components || [];
             const displayName = parsed.display_name || parsed.name;
             const accountId = parsed.account_id || '';
-            inst.sideChannelPeers[parsed.name] = { name: parsed.name, displayName: displayName, accountId: accountId, hwid: hwid, components: components, isMod: role === 'mod', connected: true, authTime: parsed.ts || Date.now() };
-            if (!inst.knownComponents) inst.knownComponents = {};
-            if (!inst.knownComponents[parsed.name]) inst.knownComponents[parsed.name] = new Set();
-            if (hwid) inst.knownComponents[parsed.name].add(hwid);
-            components.forEach(c => { if (c) inst.knownComponents[parsed.name].add(c); });
+            inst.sideChannelPeers[parsed.name] = { name: parsed.name, displayName: displayName, accountId: accountId, isMod: role === 'mod', connected: true, authTime: parsed.ts || Date.now() };
             if (!inst.peerArchive) inst.peerArchive = {};
             inst.peerArchive[parsed.name] = Object.assign(inst.peerArchive[parsed.name] || {}, inst.sideChannelPeers[parsed.name]);
             if (selectedInstancePid === pid) updatePlayerList();
             return;
         }
         if (parsed.t === 'sideChannelDisconnect') {
-            // keep peer data (hwid etc) so promote button stays visible, just mark disconnected
+            // keep peer data so promote button stays visible, just mark disconnected
             if (inst.sideChannelPeers && inst.sideChannelPeers[parsed.name])
                 inst.sideChannelPeers[parsed.name].connected = false;
             if (selectedInstancePid === pid) updatePlayerList();
@@ -965,13 +959,13 @@ function updatePlayerList() {
         // check if this player is a moderator via side-channel
         const scPeer = scPeers[player.name];
         const isMod = scPeer && scPeer.isMod;
-        const hasHwid = scPeer && scPeer.hwid;
+        const hasAccount = scPeer && scPeer.accountId;
         const eaPid = scPeer && scPeer.eaPid ? scPeer.eaPid : '';
         const modBadge = isMod ? ' <span class="mod-badge">MOD</span>' : '';
 
-        // mod promote/demote button (only if they have a side-channel connection with HWID)
+        // mod promote/demote button (only if they have a side-channel connection with account id)
         let modBtn = '';
-        if (hasHwid) {
+        if (hasAccount) {
             const safeName = escapeHtml(player.name).replace(/'/g, "\\'");
             if (isMod) {
                 modBtn = '<button class="icon-btn icon-btn-small icon-btn-warning" onclick="demotePlayer(\'' + safeName + '\')" title="Remove Moderator">' +
@@ -1029,7 +1023,7 @@ function updatePlayerList() {
                 '<button class="icon-btn icon-btn-small icon-btn-danger" onclick="banPlayer(' + id + ')" title="Ban">' +
                     '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>' +
                 '</button>' +
-                (hasHwid && typeof modLoggedIn !== 'undefined' && modLoggedIn ?
+                (hasAccount && typeof modLoggedIn !== 'undefined' && modLoggedIn ?
                 '<button class="icon-btn icon-btn-small icon-btn-danger" onclick="globalBanPlayer(\'' + escapeHtml(player.name).replace(/'/g, "\\'") + '\')" title="Global Ban (GCBDB)" style="background:var(--danger,#e53935);color:#fff;">' +
                     '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>' +
                 '</button>' : '') +
@@ -1497,8 +1491,8 @@ function promotePlayer(playerName) {
     const inst = instances[selectedInstancePid];
     if (!inst || !inst.sideChannelPeers) return;
     const peer = inst.sideChannelPeers[playerName];
-    if (!peer || !peer.hwid) return;
-    send('sendCommand', { pid: selectedInstancePid, cmd: 'Cypress.AddMod ' + peer.hwid });
+    if (!peer || !peer.accountId) return;
+    send('sendCommand', { pid: selectedInstancePid, cmd: 'Cypress.AddMod ' + peer.accountId });
     peer.isMod = true;
     updatePlayerList();
 }
@@ -1507,8 +1501,8 @@ function demotePlayer(playerName) {
     const inst = instances[selectedInstancePid];
     if (!inst || !inst.sideChannelPeers) return;
     const peer = inst.sideChannelPeers[playerName];
-    if (!peer || !peer.hwid) return;
-    send('sendCommand', { pid: selectedInstancePid, cmd: 'Cypress.RemoveMod ' + peer.hwid });
+    if (!peer || !peer.accountId) return;
+    send('sendCommand', { pid: selectedInstancePid, cmd: 'Cypress.RemoveMod ' + peer.accountId });
     peer.isMod = false;
     updatePlayerList();
 }

@@ -99,6 +99,11 @@ function doStartServer() {
     const argsField = document.getElementById('serverArgsPreview');
     const serverArgs = argsField ? argsField.value : '';
     const lsOverrides = getLoadscreenOverrides();
+    // ensure relay address is set when EU relay is on
+    var euChecked = document.getElementById('hostUseEuRelay');
+    if (euChecked && euChecked.checked && !document.getElementById('hostRelayAddress').value) {
+        document.getElementById('hostRelayAddress').value = 'relay.v0e.dev:25200';
+    }
     send('startServer', {
         deviceIP: document.getElementById('deviceIP').value,
         hostConnectionMode: document.getElementById('hostRelayMode').value,
