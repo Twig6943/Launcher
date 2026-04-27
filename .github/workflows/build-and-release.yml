@@ -16,83 +16,83 @@ jobs:
         game: [GW1, GW2, BFN]
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@v6
 
-    - name: Install Visual Studio Build Tools
-      shell: pwsh
-      run: |
-        choco install visualstudio2026buildtools `
-          --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended" `
-          -y
-        choco install cmake -y
+      - name: Install Visual Studio Build Tools
+        shell: pwsh
+        run: |
+          choco install visualstudio2026buildtools `
+            --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended" `
+            -y
+          choco install cmake -y
 
-    - name: Build Server - ${{ matrix.game }}
-      working-directory: Server
-      run: |
-      cmake --fresh . -B build -G "Visual Studio 18 2026" -DCYPRESS_${{ matrix.game }}=ON
-      cmake --build build --config Release
+      - name: Build Server - ${{ matrix.game }}
+        working-directory: Server
+        run: |
+          cmake --fresh . -B build -G "Visual Studio 18 2026" -DCYPRESS_${{ matrix.game }}=ON
+          cmake --build build --config Release
 
-    - name: Upload DLL
-      uses: actions/upload-artifact@v6
-      with:
-        name: cypress_${{ matrix.game }}
-        path: Server/build/cypress_${{ matrix.game }}.dll
+      - name: Upload DLL
+        uses: actions/upload-artifact@v6
+        with:
+          name: cypress_${{ matrix.game }}
+          path: Server/build/cypress_${{ matrix.game }}.dll
 
   launcher:
     needs: server
     runs-on: windows-latest
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v6
-      with:
-        lfs: true
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          lfs: true
 
-    - name: Install .NET SDK via Chocolatey
-      shell: pwsh
-      run: |
-        choco install dotnet-8.0-sdk -y
+      - name: Install .NET SDK via Chocolatey
+        shell: pwsh
+        run: |
+          choco install dotnet-8.0-sdk -y
 
-    - name: Download server DLLs
-      uses: actions/download-artifact@v4
-      with:
-        path: publish/CypressLauncher
-        merge-multiple: true
+      - name: Download server DLLs
+        uses: actions/download-artifact@v4
+        with:
+          path: publish/CypressLauncher
+          merge-multiple: true
 
-    - name: Build CypressLauncher
-      shell: pwsh
-      run: dotnet publish Launcher/CypressLauncher.csproj -c Release -f net8.0-windows -o publish/CypressLauncher /p:LangVersion=latest
+      - name: Build CypressLauncher
+        shell: pwsh
+        run: dotnet publish Launcher/CypressLauncher.csproj -c Release -f net8.0-windows -o publish/CypressLauncher /p:LangVersion=latest
 
-    - name: Stage release artifacts
-      shell: pwsh
-      run: |
-        $stage = "publish/CypressLauncher"
-        Copy-Item "Launcher/courgette.exe" $stage -ErrorAction SilentlyContinue
-        Copy-Item "Launcher/GW2.patch" $stage
-        Copy-Item "Launcher/BFN.Patch" $stage
-        if (Test-Path "Launcher/Docs") {
-          Copy-Item "Launcher/Docs" "$stage/README" -Recurse
-        }
+      - name: Stage release artifacts
+        shell: pwsh
+        run: |
+          $stage = "publish/CypressLauncher"
+          Copy-Item "Launcher/courgette.exe" $stage -ErrorAction SilentlyContinue
+          Copy-Item "Launcher/GW2.patch" $stage
+          Copy-Item "Launcher/BFN.Patch" $stage
+          if (Test-Path "Launcher/Docs") {
+            Copy-Item "Launcher/Docs" "$stage/README" -Recurse
+          }
 
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v6
-      with:
-        name: Cypress
-        path: publish/CypressLauncher
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: Cypress
+          path: publish/CypressLauncher
 
-    - name: Create release archive
-      if: startsWith(github.ref, 'refs/tags/v')
-      shell: pwsh
-      run: |
-        $tag = "${{ github.ref_name }}"
-        Compress-Archive -Path "publish/CypressLauncher/*" -DestinationPath "Cypress-$tag.zip"
+      - name: Create release archive
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          Compress-Archive -Path "publish/CypressLauncher/*" -DestinationPath "Cypress-$tag.zip"
 
-    - name: Create GitHub Release
-      if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v2
-      with:
-        files: Cypress-*.zip
-        generate_release_notes: true
-        draft: false
-        prerelease: false
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Cypress-*.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false
