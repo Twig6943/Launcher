@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/hmac"
 	"crypto/rand"
@@ -37,6 +38,14 @@ type Config struct {
 	LeaseFile     string
 	NoDashboard   bool
 	MasterURL     string
+}
+
+// strip port from host if already present, otherwise append cfg port
+func buildRelayAddress(host string, port int) string {
+	if strings.Contains(host, ":") {
+		return host
+	}
+	return fmt.Sprintf("%s:%d", host, port)
 }
 
 // constants
@@ -229,7 +238,7 @@ func newLeaseStore(cfg Config) *leaseStore {
 		logFile:          lf,
 		leaseFile:        cfg.LeaseFile,
 		dashboard:        !cfg.NoDashboard,
-		relayAddress:     fmt.Sprintf("%s:%d", cfg.RelayHost, cfg.Port),
+		relayAddress:     buildRelayAddress(cfg.RelayHost, cfg.Port),
 		relayHost:        cfg.RelayHost,
 		publicDomain:     cfg.PublicDomain,
 		publicPrefix:     cfg.PublicPrefix,
@@ -411,10 +420,18 @@ func (s *leaseStore) sendToClient(udpConn *net.UDPConn, target *net.UDPAddr, dat
 	if gr != nil {
 		var hdr [2]byte
 		binary.BigEndian.PutUint16(hdr[:], uint16(len(data)))
+		payload := make([]byte, 2+len(data))
+		copy(payload[:2], hdr[:])
+		copy(payload[2:], data)
 		gr.mu.Lock()
-		gr.conn.Write(hdr[:])
-		gr.conn.Write(data)
+		gr.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		_, err := gr.conn.Write(payload)
+		gr.conn.SetWriteDeadline(time.Time{})
 		gr.mu.Unlock()
+		if err != nil {
+			gr.conn.Close()
+			return
+		}
 		s.stats.TCPBytesOut.Add(int64(len(data)) + 2)
 		s.stats.sendToClientViaGR.Add(1)
 		if c := s.stats.sendToClientViaGR.Load(); c <= 5 {
@@ -701,7 +718,9 @@ func writeFrame(conn net.Conn, mu *sync.Mutex, cmd byte, clientID uint32, data [
 	payload := append(hdr, data...)
 
 	mu.Lock()
+	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	_, err := conn.Write(payload)
+	conn.SetWriteDeadline(time.Time{})
 	mu.Unlock()
 
 	if stats != nil {
@@ -736,17 +755,22 @@ func tunnelDispatcher(conn net.Conn, tunnel *tunnelState, store *leaseStore, sta
 		if err != nil {
 			return
 		}
-		tunnel.mu.Lock()
+
 		switch cmd {
 		case cmdData:
-			if cw, ok := tunnel.clients[cid]; ok {
+			tunnel.mu.Lock()
+			cw := tunnel.clients[cid]
+			tunnel.mu.Unlock()
+			if cw != nil {
 				cw.Write(data)
 			}
 		case cmdClose:
+			tunnel.mu.Lock()
 			if cw, ok := tunnel.clients[cid]; ok {
 				cw.Close()
 				delete(tunnel.clients, cid)
 			}
+			tunnel.mu.Unlock()
 		case cmdUDP:
 			// registration packets from the bridge don't have the 6-byte header
 			if len(data) >= len(registerPrefix) && string(data[:len(registerPrefix)]) == registerPrefix {
@@ -762,7 +786,6 @@ func tunnelDispatcher(conn net.Conn, tunnel *tunnelState, store *leaseStore, sta
 		case cmdPong:
 			// keepalive response, connection is alive
 		}
-		tunnel.mu.Unlock()
 	}
 }
 
@@ -776,7 +799,9 @@ func clientToTunnel(clientConn net.Conn, tunnel *tunnelState, clientID uint32, s
 		if stats != nil {
 			stats.TCPBytesIn.Add(int64(n))
 		}
-		writeFrame(tunnel.conn, &tunnel.mu, cmdData, clientID, buf[:n], stats)
+		if err := writeFrame(tunnel.conn, &tunnel.mu, cmdData, clientID, buf[:n], stats); err != nil {
+			return
+		}
 	}
 }
 
@@ -803,31 +828,24 @@ func handleTCPConn(conn net.Conn, store *leaseStore) {
 	st := &store.stats
 
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	buf := make([]byte, 4096)
-	n, err := conn.Read(buf)
-	if err != nil || n == 0 {
+	reader := bufio.NewReaderSize(conn, 4096)
+	line, err := reader.ReadBytes('\n')
+	if err != nil && len(line) == 0 {
 		return
 	}
 	conn.SetReadDeadline(time.Time{})
 
-	// find end of JSON (first newline or closing brace)
-	jsonEnd := n
-	for i := 0; i < n; i++ {
-		if buf[i] == '\n' {
-			jsonEnd = i
-			break
-		}
-	}
-	remainder := buf[jsonEnd:n] // leftover bytes after JSON
-	if len(remainder) > 0 && remainder[0] == '\n' {
-		remainder = remainder[1:]
-	}
+	// trim trailing newline
+	jsonData := bytes.TrimRight(line, "\n\r")
 
 	var msg map[string]any
-	if err := json.Unmarshal(buf[:jsonEnd], &msg); err != nil {
+	if err := json.Unmarshal(jsonData, &msg); err != nil {
 		store.log(fmt.Sprintf("x  bad handshake from %s", peer))
 		return
 	}
+
+	// anything buffered after the newline is remainder
+	remainder, _ := io.ReadAll(io.LimitReader(reader, int64(reader.Buffered())))
 
 	msgType, _ := msg["type"].(string)
 	key, _ := msg["key"].(string)
@@ -946,6 +964,11 @@ func handleTCPConn(conn net.Conn, store *leaseStore) {
 
 		writeFrame(tunnel.conn, &tunnel.mu, cmdOpen, clientID, nil, st)
 
+		// forward any remainder bytes that arrived with the handshake
+		if len(remainder) > 0 {
+			writeFrame(tunnel.conn, &tunnel.mu, cmdData, clientID, remainder, st)
+		}
+
 		clientToTunnel(conn, tunnel, clientID, st)
 
 		tunnel.mu.Lock()
@@ -982,15 +1005,22 @@ func handleTCPConn(conn net.Conn, store *leaseStore) {
 
 		// find the client's real UDP address from the lease so we can impersonate it
 		// this keeps the server SocketManager seeing the same peer as the initial direct UDP handshake
+		// pick the most recently seen address that isn't already claimed by another game relay
 		lease.mu.Lock()
 		var clientAddr *net.UDPAddr
 		var clientAddrStr string
-		for addr := range lease.ClientLastSeen {
+		var bestTime time.Time
+		for addr, lastSeen := range lease.ClientLastSeen {
 			parsed, err := net.ResolveUDPAddr("udp", addr)
 			if err == nil && !parsed.IP.IsPrivate() && !parsed.IP.IsLoopback() {
-				clientAddr = parsed
-				clientAddrStr = addr
-				break
+				store.gameRelayMu.RLock()
+				_, claimed := store.gameRelayClients[addr]
+				store.gameRelayMu.RUnlock()
+				if !claimed && lastSeen.After(bestTime) {
+					clientAddr = parsed
+					clientAddrStr = addr
+					bestTime = lastSeen
+				}
 			}
 		}
 		lease.mu.Unlock()
@@ -1114,7 +1144,7 @@ func handleTCPConn(conn net.Conn, store *leaseStore) {
 
 		writeFrame(tunnel.conn, &tunnel.mu, cmdOpen, clientID, nil, st)
 		// forward the handshake line as first data
-		writeFrame(tunnel.conn, &tunnel.mu, cmdData, clientID, buf[:n], st)
+		writeFrame(tunnel.conn, &tunnel.mu, cmdData, clientID, append(line, remainder...), st)
 
 		clientToTunnel(conn, tunnel, clientID, st)
 
