@@ -30,15 +30,15 @@ jobs:
           cd build
           cmake --fresh .. -G "Visual Studio 18 2026" -DCYPRESS_GW1=ON
           cmake --build . --config Release
-          copy build\Release\cypress_GW1.dll .
+          copy Release\cypress_GW1.dll ..
 
           cmake --fresh .. -G "Visual Studio 18 2026" -DCYPRESS_GW2=ON
           cmake --build . --config Release
-          copy build\Release\cypress_GW2.dll .
+          copy Release\cypress_GW2.dll ..
 
           cmake --fresh .. -G "Visual Studio 18 2026" -DCYPRESS_BFN=ON
           cmake --build . --config Release
-          copy build\Release\cypress_BFN.dll .
+          copy Release\cypress_BFN.dll ..
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
