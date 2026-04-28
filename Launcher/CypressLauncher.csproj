@@ -1,12 +1,13 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <AssemblyName>CypressLauncher</AssemblyName>
-    <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
     <OutputType>WinExe</OutputType>
     <TargetFrameworks>net8.0;net8.0-windows</TargetFrameworks>
     <Configurations>Debug;Release</Configurations>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Version>2.0.1</Version>
+    <Company>CypressLauncher</Company>
+    <Product>CypressLauncher</Product>
   </PropertyGroup>
   <PropertyGroup>
     <LangVersion>12.0</LangVersion>

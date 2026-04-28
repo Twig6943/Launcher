@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
@@ -7,6 +8,8 @@ using System.Linq;
 using System.Net.Http;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 
@@ -15,6 +18,7 @@ namespace CypressLauncher;
 public partial class MessageHandler
 {
 	private static readonly string s_updateSavedataKey = "Updates";
+	private static readonly string[] s_serverUpdateGames = { "GW1", "GW2", "BFN" };
 
 	private sealed class UpdateChannel
 	{
@@ -43,8 +47,8 @@ public partial class MessageHandler
 
 	private UpdateChannel[] GetUpdateChannels()
 	{
-		string launcherVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
-		string serverVersion = GetSavedServerDllVersion();
+		string launcherVersion = GetLauncherVersion();
+		string serverVersion = GetSavedServerDllVersion(launcherVersion);
 
 		return new[]
 		{
@@ -53,17 +57,38 @@ public partial class MessageHandler
 		};
 	}
 
-	private string GetSavedServerDllVersion()
+	private static string GetLauncherVersion()
+	{
+		var assembly = Assembly.GetExecutingAssembly();
+		string? infoVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+		if (!string.IsNullOrWhiteSpace(infoVersion))
+			return NormalizeVersion(infoVersion.Split('+')[0]);
+		return assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+	}
+
+	private string GetSavedServerDllVersion(string bundledVersion)
 	{
 		try
 		{
 			string filePath = Path.Combine(GetAppdataDir(), s_launcherSavedataFilename);
-			if (!File.Exists(filePath)) return "0.0.0";
-			var root = JObject.Parse(File.ReadAllText(filePath));
-			var updates = root[s_updateSavedataKey] as JObject;
-			return (string?)updates?["server_dll_version"] ?? "0.0.0";
+			if (File.Exists(filePath))
+			{
+				var root = JObject.Parse(File.ReadAllText(filePath));
+				var updates = root[s_updateSavedataKey] as JObject;
+				string? savedVersion = (string?)updates?["server_dll_version"];
+				if (!string.IsNullOrWhiteSpace(savedVersion))
+					return NormalizeVersion(savedVersion);
+			}
+
+			return HasBundledServerDlls() ? bundledVersion : "0.0.0";
 		}
-		catch { return "0.0.0"; }
+		catch { return HasBundledServerDlls() ? bundledVersion : "0.0.0"; }
+	}
+
+	private static bool HasBundledServerDlls()
+	{
+		return s_serverUpdateGames.All(game =>
+			File.Exists(Path.Combine(AppContext.BaseDirectory, $"cypress_{game}.dll")));
 	}
 
 	private void SaveServerDllVersion(string version)
@@ -75,7 +100,7 @@ public partial class MessageHandler
 			if (File.Exists(filePath))
 				root = JObject.Parse(File.ReadAllText(filePath));
 			var updates = root[s_updateSavedataKey] as JObject ?? new JObject();
-			updates["server_dll_version"] = version;
+			updates["server_dll_version"] = NormalizeVersion(version);
 			root[s_updateSavedataKey] = updates;
 			File.WriteAllText(filePath, root.ToString());
 		}
@@ -84,14 +109,27 @@ public partial class MessageHandler
 
 	private static bool IsNewerVersion(string local, string remote)
 	{
-		// strip leading v
-		local = local.TrimStart('v', 'V');
-		remote = remote.TrimStart('v', 'V');
+		if (!TryParseUpdateVersion(local, out var localVer) || !TryParseUpdateVersion(remote, out var remoteVer))
+			return false;
 
-		if (Version.TryParse(local, out var localVer) && Version.TryParse(remote, out var remoteVer))
-			return remoteVer > localVer;
+		return remoteVer != null && localVer != null && remoteVer > localVer;
+	}
 
-		return false;
+	private static string NormalizeVersion(string version)
+	{
+		version = version.Trim().TrimStart('v', 'V');
+		if (version.Length == 0) return "0.0.0";
+
+		var match = Regex.Match(version, @"^\d+(?:\.\d+){0,3}");
+		return match.Success ? match.Value : version;
+	}
+
+	private static bool TryParseUpdateVersion(string value, out Version? version)
+	{
+		string normalized = NormalizeVersion(value);
+		if (normalized.Count(c => c == '.') == 0)
+			normalized += ".0";
+		return Version.TryParse(normalized, out version);
 	}
 
 	private void OnCheckUpdates()
@@ -100,20 +138,26 @@ public partial class MessageHandler
 		{
 			var channels = GetUpdateChannels();
 			var updates = new JArray();
+			var releaseCache = new Dictionary<string, JObject>();
 
 			foreach (var ch in channels)
 			{
 				try
 				{
-					var request = new HttpRequestMessage(HttpMethod.Get,
-						$"https://api.github.com/repos/{ch.RepoOwner}/{ch.RepoName}/releases/latest");
-					request.Headers.Add("User-Agent", "CypressLauncher");
-					request.Headers.Add("Accept", "application/vnd.github+json");
+					string repoKey = $"{ch.RepoOwner}/{ch.RepoName}";
+					if (!releaseCache.TryGetValue(repoKey, out var json))
+					{
+						var request = new HttpRequestMessage(HttpMethod.Get,
+							$"https://api.github.com/repos/{ch.RepoOwner}/{ch.RepoName}/releases/latest");
+						request.Headers.Add("User-Agent", "CypressLauncher");
+						request.Headers.Add("Accept", "application/vnd.github+json");
 
-					var resp = await s_httpClient.SendAsync(request);
-					if (!resp.IsSuccessStatusCode) continue;
+						var resp = await s_httpClient.SendAsync(request);
+						if (!resp.IsSuccessStatusCode) continue;
 
-					var json = JObject.Parse(await resp.Content.ReadAsStringAsync());
+						json = JObject.Parse(await resp.Content.ReadAsStringAsync());
+						releaseCache[repoKey] = json;
+					}
 					string? tag = (string?)json["tag_name"];
 					if (tag == null) continue;
 
@@ -158,6 +202,12 @@ public partial class MessageHandler
 				catch { }
 			}
 
+			if (updates.OfType<JObject>().Any(u => (string?)u["channel"] == "launcher"))
+			{
+				foreach (var update in updates.OfType<JObject>().Where(u => (string?)u["channel"] == "server").ToList())
+					update.Remove();
+			}
+
 			Send(new JObject { ["type"] = "updateCheckResult", ["updates"] = updates });
 		});
 	}
@@ -166,11 +216,16 @@ public partial class MessageHandler
 	{
 		string channel = (string?)msg["channel"] ?? "";
 		string assetUrl = (string?)msg["assetUrl"] ?? "";
-		string latestVersion = (string?)msg["latestVersion"] ?? "";
+		string latestVersion = NormalizeVersion((string?)msg["latestVersion"] ?? "");
 
 		if (string.IsNullOrEmpty(channel) || string.IsNullOrEmpty(assetUrl))
 		{
 			Send(new JObject { ["type"] = "updateError", ["channel"] = channel, ["error"] = "Missing update info" });
+			return;
+		}
+		if (channel != "server" && channel != "launcher")
+		{
+			Send(new JObject { ["type"] = "updateError", ["channel"] = channel, ["error"] = "Unknown update channel" });
 			return;
 		}
 
@@ -179,8 +234,7 @@ public partial class MessageHandler
 			try
 			{
 				string tempDir = Path.Combine(Path.GetTempPath(), "cypress-update", channel);
-				if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
-				Directory.CreateDirectory(tempDir);
+				ResetUpdateDirectory(tempDir);
 
 				string zipPath = Path.Combine(tempDir, "update.zip");
 
@@ -215,12 +269,12 @@ public partial class MessageHandler
 						}
 					}
 				}
+				if (lastPercent != 100)
+					Send(new JObject { ["type"] = "updateProgress", ["channel"] = channel, ["percent"] = 100 });
 
-				// extract
 				string extractDir = Path.Combine(tempDir, "extracted");
 				ZipFile.ExtractToDirectory(zipPath, extractDir, true);
 
-				// if the zip contains a single top-level folder, use its contents
 				var topDirs = Directory.GetDirectories(extractDir);
 				var topFiles = Directory.GetFiles(extractDir);
 				if (topDirs.Length == 1 && topFiles.Length == 0)
@@ -232,7 +286,7 @@ public partial class MessageHandler
 				}
 				else if (channel == "launcher")
 				{
-					ApplyLauncherUpdate(extractDir);
+					ApplyLauncherUpdate(extractDir, latestVersion);
 				}
 
 				Send(new JObject { ["type"] = "updateComplete", ["channel"] = channel, ["version"] = latestVersion });
@@ -244,13 +298,33 @@ public partial class MessageHandler
 		});
 	}
 
+	private static void ResetUpdateDirectory(string dir)
+	{
+		for (int i = 0; i < 5; i++)
+		{
+			try
+			{
+				if (Directory.Exists(dir)) Directory.Delete(dir, true);
+				Directory.CreateDirectory(dir);
+				return;
+			}
+			catch when (i < 4)
+			{
+				Thread.Sleep(250);
+			}
+		}
+
+		if (Directory.Exists(dir)) Directory.Delete(dir, true);
+		Directory.CreateDirectory(dir);
+	}
+
 	private void ApplyServerUpdate(string extractDir, string version)
 	{
-		// copy DLLs to the launcher directory (next to the exe)
-		// they get copied to the game directory as dinput8.dll at launch time
 		string installDir = AppContext.BaseDirectory;
-		string[] games = { "GW1", "GW2", "BFN" };
-		foreach (string game in games)
+		var filesToCopy = new List<(string Source, string Dest)>();
+		var missingDlls = new List<string>();
+
+		foreach (string game in s_serverUpdateGames)
 		{
 			string dllName = $"cypress_{game}.dll";
 			string srcPath = Path.Combine(extractDir, dllName);
@@ -258,35 +332,88 @@ public partial class MessageHandler
 			{
 				var found = Directory.GetFiles(extractDir, dllName, SearchOption.AllDirectories).FirstOrDefault();
 				if (found != null) srcPath = found;
-				else continue;
+				else
+				{
+					missingDlls.Add(dllName);
+					continue;
+				}
 			}
 
 			string destPath = Path.Combine(installDir, dllName);
-			File.Copy(srcPath, destPath, true);
+			filesToCopy.Add((srcPath, destPath));
 		}
 
-		SaveServerDllVersion(version.TrimStart('v', 'V'));
+		if (missingDlls.Count > 0)
+			throw new InvalidDataException("Update package missing " + string.Join(", ", missingDlls));
+
+		foreach (var file in filesToCopy)
+		{
+			File.Copy(file.Source, file.Dest, true);
+		}
+
+		SaveServerDllVersion(version);
 		SendStatus("Server DLLs updated to " + version, "info");
 	}
 
-	private void ApplyLauncherUpdate(string extractDir)
+	private void ApplyLauncherUpdate(string extractDir, string version)
 	{
 		string installDir = AppContext.BaseDirectory;
 		string tempDir = Path.Combine(Path.GetTempPath(), "cypress-update", "launcher");
+		string exePath = Path.Combine(extractDir, "CypressLauncher.exe");
+		if (!File.Exists(exePath))
+		{
+			string? foundExe = Directory.GetFiles(extractDir, "CypressLauncher.exe", SearchOption.AllDirectories).FirstOrDefault();
+			if (foundExe == null)
+				throw new InvalidDataException("Update package missing CypressLauncher.exe");
+			extractDir = Path.GetDirectoryName(foundExe) ?? extractDir;
+		}
 
-		// write a powershell script that waits for us to exit, copies files, restarts
 		string scriptPath = Path.Combine(tempDir, "apply.ps1");
+		string logPath = Path.Combine(tempDir, "apply.log");
+		string statePath = Path.Combine(GetAppdataDir(), s_launcherSavedataFilename);
 		int pid = Environment.ProcessId;
 
 		string script = $@"
 $ErrorActionPreference = 'Stop'
+$log = {PsQuote(logPath)}
+function Write-UpdateLog([string]$message) {{
+    Add-Content -LiteralPath $log -Value (""{{0}} {{1}}"" -f (Get-Date -Format o), $message)
+}}
 try {{
+    Write-UpdateLog 'waiting for launcher'
     $proc = Get-Process -Id {pid} -ErrorAction SilentlyContinue
-    if ($proc) {{ $proc.WaitForExit(30000) | Out-Null }}
-}} catch {{}}
-Start-Sleep -Milliseconds 500
-Copy-Item -Path '{extractDir}\*' -Destination '{installDir}' -Recurse -Force
-Start-Process '{Path.Combine(installDir, "CypressLauncher.exe")}'
+    if ($proc) {{
+        if (-not $proc.WaitForExit(60000)) {{
+            Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 1000
+        }}
+    }}
+    $source = {PsQuote(extractDir)}
+    $dest = {PsQuote(installDir)}
+    Write-UpdateLog 'copying update files'
+    $copy = Start-Process -FilePath 'robocopy.exe' -ArgumentList @($source, $dest, '/E', '/R:30', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NP') -Wait -PassThru -WindowStyle Hidden
+    if ($copy.ExitCode -ge 8) {{ throw ""robocopy failed with exit code $($copy.ExitCode)"" }}
+    $statePath = {PsQuote(statePath)}
+    $stateDir = Split-Path -Parent $statePath
+    New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+    if (Test-Path -LiteralPath $statePath) {{
+        $jsonText = Get-Content -LiteralPath $statePath -Raw
+        if ([string]::IsNullOrWhiteSpace($jsonText)) {{ $state = [pscustomobject]@{{}} }}
+        else {{ $state = $jsonText | ConvertFrom-Json }}
+    }} else {{
+        $state = [pscustomobject]@{{}}
+    }}
+    if (-not $state.PSObject.Properties['{s_updateSavedataKey}']) {{
+        $state | Add-Member -NotePropertyName '{s_updateSavedataKey}' -NotePropertyValue ([pscustomobject]@{{}})
+    }}
+    $state.{s_updateSavedataKey} | Add-Member -NotePropertyName 'server_dll_version' -NotePropertyValue {PsQuote(version)} -Force
+    $state | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $statePath -Encoding UTF8
+    Write-UpdateLog 'starting launcher'
+    Start-Process -FilePath {PsQuote(Path.Combine(installDir, "CypressLauncher.exe"))} -WorkingDirectory $dest
+}} catch {{
+    Add-Content -LiteralPath $log -Value (""{{0}} failed: {{1}}"" -f (Get-Date -Format o), $_.Exception.Message)
+    try {{ Start-Process -FilePath {PsQuote(Path.Combine(installDir, "CypressLauncher.exe"))} -WorkingDirectory $dest }} catch {{}}
+}}
 ";
 		File.WriteAllText(scriptPath, script, Encoding.UTF8);
 
@@ -295,12 +422,17 @@ Start-Process '{Path.Combine(installDir, "CypressLauncher.exe")}'
 			FileName = "powershell.exe",
 			Arguments = $"-ExecutionPolicy Bypass -WindowStyle Hidden -File \"{scriptPath}\"",
 			UseShellExecute = true,
-			CreateNoWindow = true
+			CreateNoWindow = true,
+			WindowStyle = ProcessWindowStyle.Hidden
 		};
 		Process.Start(psi);
 
-		// exit the launcher so the script can overwrite files
 		SendStatus("Restarting to apply update...", "info");
 		Environment.Exit(0);
+	}
+
+	private static string PsQuote(string value)
+	{
+		return "'" + value.Replace("'", "''") + "'";
 	}
 }

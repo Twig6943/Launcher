@@ -70,7 +70,21 @@ jobs:
       - name: Build CypressLauncher
         shell: pwsh
         run: |
-          dotnet publish Launcher/CypressLauncher.csproj -c Release -f net8.0-windows -o publish/CypressLauncher /p:LangVersion=latest
+          $versionArgs = @()
+          $releaseTag = "${{ github.event.inputs.release_tag }}"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and -not [string]::IsNullOrWhiteSpace($releaseTag)) {
+            $version = $releaseTag.TrimStart('v', 'V')
+            $assemblyVersion = ([regex]::Match($version, '^\d+(?:\.\d+){0,3}')).Value
+            if (-not $assemblyVersion) { throw "release tag must start with a numeric version" }
+            while (($assemblyVersion.Split('.').Count) -lt 4) { $assemblyVersion += ".0" }
+            $versionArgs = @(
+              "/p:Version=$version",
+              "/p:AssemblyVersion=$assemblyVersion",
+              "/p:FileVersion=$assemblyVersion",
+              "/p:InformationalVersion=$version"
+            )
+          }
+          dotnet publish Launcher/CypressLauncher.csproj -c Release -f net8.0-windows -o publish/CypressLauncher /p:LangVersion=latest @versionArgs
 
       - name: Stage release artifacts
         shell: pwsh

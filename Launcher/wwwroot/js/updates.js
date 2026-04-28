@@ -68,8 +68,10 @@ function onUpdateComplete(data) {
 function onUpdateError(data) {
     var banner = document.getElementById('updateBanner_' + data.channel);
     if (banner) {
+        var retry = pendingUpdates[data.channel] ? '<button class="btn btn-sm btn-primary" onclick="startUpdate(\'' + data.channel + '\')">Retry</button>' : '';
         banner.innerHTML =
             '<div class="update-banner-text update-error">Update failed: ' + escapeHtml(data.error) + '</div>' +
+            retry +
             '<button class="btn btn-sm btn-secondary" onclick="dismissUpdate(\'' + data.channel + '\')">Dismiss</button>';
     }
 }
