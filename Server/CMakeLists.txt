@@ -30,10 +30,18 @@ FetchContent_Declare(
   GIT_TAG 8167d2f64122c3ef7e5a0d9cab239fdba37aa54c
 )
 
+### Monocypher
+FetchContent_Declare(
+  monocypher
+  GIT_REPOSITORY https://github.com/LoupVaillant/Monocypher.git
+  GIT_TAG c0e0efd25b614ef22bb72aa71203a747904c370d
+)
+
 FetchContent_MakeAvailable(
   minhook
   EASTL
   nlohmann_json
+  monocypher
 )
 
 # Options for variants
@@ -53,17 +61,19 @@ file(GLOB_RECURSE SOURCES
     include/*.cpp
 )
 
-# monocypher is C, compile separately
-file(GLOB MONOCYPHER_SRC include/monocypher.c)
-list(APPEND SOURCES ${MONOCYPHER_SRC})
-
 add_library(cypress SHARED ${SOURCES})
+
+# Explicitly compile monocypher
+target_sources(cypress PRIVATE
+    ${monocypher_SOURCE_DIR}/src/monocypher.c
+)
 
 # Includes
 target_include_directories(cypress PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/Source
+    ${monocypher_SOURCE_DIR}/src
 )
 
 # Precompiled headers
