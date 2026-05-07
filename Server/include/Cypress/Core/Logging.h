@@ -3,8 +3,8 @@
 #include <iostream>
 #include <format>
 
-#include <Core/VersionInfo.h>
-#include <Core/Config.h>
+#include <Cypress/Core/VersionInfo.h>
+#include <Cypress/Core/Config.h>
 
 enum class LogLevel
 {

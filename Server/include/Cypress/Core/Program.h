@@ -1,8 +1,6 @@
 #pragma once
-#include <Core/Client.h>
-#include <Core/Server.h>
-#include <Core/Settings.h>
-#include <fb/Engine/Server.h>
+#include <Cypress/Core/Client.h>
+#include <Cypress/Core/Server.h>
 #include <IGameModule.h>
 #include <thread>
 #include <mutex>

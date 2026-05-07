@@ -2,11 +2,9 @@
 #include "fbServerHooks.h"
 
 #include <string>
-#include <sstream>
 #include <thread>
-#include <Core/Program.h>
-#include <Core/Logging.h>
-#include <Core/Console/ConsoleFunctions.h>
+#include <Cypress/Core/Program.h>
+#include <Cypress/Core/Logging.h>
 #include <fb/Engine/Server.h>
 #include <fb/Engine/ServerGameContext.h>
 

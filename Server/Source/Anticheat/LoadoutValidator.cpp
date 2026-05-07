@@ -8,7 +8,7 @@
 #include <fb/TypeInfo/PVZCharacterCustomizationAsset.h>
 #include <fb/Engine/ResourceManager.h>
 
-#include "Core/Program.h"
+#include "Cypress/Core/Program.h"
 
 bool LoadoutValidator::isValidTeamForFaction(int teamId, bool isPlant, bool isZombie) {
     if (isPlant && teamId != 2) return false;

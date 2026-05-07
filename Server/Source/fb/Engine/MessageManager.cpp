@@ -22,4 +22,10 @@ namespace fb
         CYPRESS_DEBUG_LOGMESSAGE(LogLevel::Debug, "Registered message listener for {} messages", category);
         return registered;
     }
+
+    void MessageManager::queueMessage( Message* msg, float delay )
+    {
+        CallFunc<void, MessageManagerImpl*, Message*, float>( OFFSET_FB_MESSAGEMANAGER_QUEUEMESSAGE,
+            m_impl, msg, delay );
+    }
 }

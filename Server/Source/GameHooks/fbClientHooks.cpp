@@ -2,12 +2,11 @@
 #include "fbClientHooks.h"
 #include <fb/Engine/MessageListener.h>
 #include <fb/Engine/ExecutionContext.h>
-#include <Core/Program.h>
+#include <Cypress/Core/Program.h>
 #include <thread>
 #include <fstream>
-#ifdef CYPRESS_BFN
 #include <fb/SecureReason.h>
-#endif
+#include <Cypress/Presence/PresenceManager.h>
 
 #ifdef CYPRESS_BFN
 DEFINE_HOOK(
@@ -44,6 +43,31 @@ DEFINE_HOOK(
 void* g_persistenceClassThing = nullptr;
 
 DEFINE_HOOK(
+	gw2_unk1,
+	__fastcall,
+	void,
+)
+{
+	//CYPRESS_LOGMESSAGE( LogLevel::Debug, "Unk function called!" );
+
+	while (!IsDebuggerPresent())
+		Sleep(1000);
+
+	void* unkPtr = *(void**)0x142B69318;
+	//CYPRESS_LOGMESSAGE( LogLevel::Debug, "Unk ptr: {}", unkPtr );
+	if (unkPtr)
+	{
+		if (!Cypress::g_presenceManager)
+		{
+			Cypress::PresenceManager::Initialize();
+		}
+		//CYPRESS_LOGMESSAGE( LogLevel::Debug, "Unk ptr bool: {}", ptrread<bool>(unkPtr, 0x2D1800));
+	}
+
+	Orig_gw2_unk1();
+}
+
+DEFINE_HOOK(
 	fb_Client_enterState,
 	__fastcall,
 	void,
@@ -56,6 +80,14 @@ DEFINE_HOOK(
 	Cypress::Client* client = g_program->GetClient();
 	client->SetFbClientInstance(thisPtr);
 	client->SetClientState(state);
+
+	if (state == fb::ClientState_Startup)
+	{
+		if (!Cypress::g_presenceManager)
+		{
+			Cypress::PresenceManager::Initialize();
+		}
+	}
 
 	if (state == fb::ClientState_ConnectToServer)
 	{
@@ -209,7 +241,6 @@ DEFINE_HOOK(
 	Orig_fb_OnlineManager_connectToAddress(thisPtr, ipAddr, serverPassword);
 }
 
-#ifdef CYPRESS_BFN
 DEFINE_HOOK(
 	fb_OnlineManager_onGotDisconnected,
 	__fastcall,
@@ -243,6 +274,7 @@ DEFINE_HOOK(
 	exit(0xCC1);
 }
 
+#ifdef CYPRESS_BFN
 DEFINE_HOOK(
 	fb_EAUser_ctor,
 	__fastcall,

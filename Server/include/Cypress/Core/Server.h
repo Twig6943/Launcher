@@ -1,5 +1,5 @@
 #pragma once
-#include <Core/Config.h>
+#include <Cypress/Core/Config.h>
 #include <Kyber/SocketManager.h>
 #include <ServerBanlist.h>
 #include <ServerPlaylist.h>

@@ -5,10 +5,10 @@
 #include <cstdint>
 #include <MemUtil.h>
 #include <MinHook.h>
-#include <Core/VersionInfo.h>
-#include <Core/Logging.h>
-#include <Core/Assert.h>
-#include <Core/Config.h>
+#include <Cypress/Core/VersionInfo.h>
+#include <Cypress/Core/Logging.h>
+#include <Cypress/Core/Assert.h>
+#include <Cypress/Core/Config.h>
 #include <ServerBanlist.h>
 #include <ServerPlaylist.h>
 #include <StringUtil.h>
