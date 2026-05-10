@@ -509,6 +509,10 @@ DEFINE_HOOK(
 	}
 
 	Orig_fb_ServerLoadLevelMessage_post(levelSetup, fadeOut, forceReloadResources);
+
+#ifdef CYPRESS_GW2
+	LoadoutValidator::getInstance().invalidate();
+#endif
 }
 #endif
 
@@ -786,13 +790,8 @@ DEFINE_HOOK(
 	}
 
 #ifdef CYPRESS_GW2
-	// init anticheat + loadout validator on first player join
-	static bool anticheatInitialized = false;
-	if (!anticheatInitialized)
-	{
+	if (LoadoutValidator::getInstance().needsInit())
 		LoadoutValidator::getInstance().init();
-		anticheatInitialized = true;
-	}
 #endif
 
 	void* result = Orig_fb_ServerPlayerManager_addPlayer(thisPtr, player, nickname);
