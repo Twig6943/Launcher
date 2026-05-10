@@ -103,6 +103,7 @@ public:
      
     inline static std::unordered_map<uint32_t, WeaponSet> weaponSets;
     inline static std::unordered_map<uint32_t, UpgradeSet> upgradeSets;
+    inline static std::vector<uint32_t> upgradableWeaponIds;
 
     std::set<std::string> kitBlacklist
     {

@@ -1,45 +1,25 @@
 #include <pch.h>
-#include <Cypress/Presence/PresenceManager.h>
+#include <Cypress/Presence/GW1PresenceManager.h>
 #include <fb/Engine/ClientGameContext.h>
-#include <fb/Engine/Message.h>
-#include <nlohmann/json.hpp>
-#include <fstream>
-#include <External/EA_GW/EASTL/include/EASTL/hash_map.h>
 
 namespace Cypress
 {
-    PresenceManager* g_presenceManager = nullptr;
-    nlohmann::json g_saveFile;
-
-    PresenceManager::PresenceManager()
+    GW1PresenceManager::GW1PresenceManager()
     {
-        fb::ClientGameContext* clientCtx = fb::ClientGameContext::GetInstance();
-        CYPRESS_ASSERT( clientCtx != nullptr, "Trying to create presence manager on the server?");
-        CYPRESS_ASSERT( g_presenceManager == nullptr, "Tried to create PresenceManager twice!" );
+        auto* clientCtx = fb::ClientGameContext::GetInstance();
 
         clientCtx->m_messageManager.registerMessageListener(fnvHashConstexpr( "Presence" ), this);
+    }
 
+    void GW1PresenceManager::Initialize()
+    {
         InitializePresenceState();
-
-        std::ifstream saveIn("cypsave.json");
-        if (saveIn.is_open())
-            g_saveFile = nlohmann::json::parse( saveIn );
-        saveIn.close();
+        LoadSaveFile();
     }
 
-    void PresenceManager::Initialize()
+    void GW1PresenceManager::InitializePresenceState()
     {
-#ifdef CYPRESS_GW1
-        g_presenceManager = new PresenceManager();
-        CYPRESS_LOGMESSAGE( LogLevel::Info, "Initialized PresenceManager" );
-#else
-        CYPRESS_LOGMESSAGE( LogLevel::Warning, "Presence has not been implemented for this game yet" );
-#endif
-    }
-
-    void PresenceManager::InitializePresenceState()
-    {
-        void* presenceState = *(void**)OFFSET_FB_G_PRESENCESTATE;
+        void* presenceState = *(void**)0x142044038;
         CYPRESS_ASSERT( presenceState != nullptr, "Trying to create presence manager before engine's presence state has been created" );
 
         // change presencestate's state to Online so we get bytevault update requests from our client
@@ -58,9 +38,8 @@ namespace Cypress
 #endif
     }
 
-    void PresenceManager::onMessage( fb::Message& inMessage )
+    void GW1PresenceManager::onMessage( fb::Message& inMessage )
     {
-        CYPRESS_LOGMESSAGE( LogLevel::Debug, "Got presence message: {}", inMessage.getType()->getName() );
         switch (inMessage.m_type)
         {
             case fnvHashConstexpr( "PresencePVZGetByteVaultSubRecordMessageBase" ):
@@ -68,10 +47,10 @@ namespace Cypress
                     auto& requestMsg = reinterpret_cast<fb::PresencePVZGetByteVaultSubRecordMessageBase&>(inMessage);
                     CYPRESS_DEBUG_LOGMESSAGE(LogLevel::Debug, "Requesting save category: {}", requestMsg.subcategory.c_str());
 
-                    auto categoryIt = g_saveFile.find( requestMsg.subcategory.c_str() );
-                    if (categoryIt != g_saveFile.end() && categoryIt->is_object())
+                    auto categoryIt = m_saveFile.find( requestMsg.subcategory.c_str() );
+                    if (categoryIt != m_saveFile.end() && categoryIt->is_object())
                     {
-                        fb::PVZRecordMap records;
+                        eastl::map<eastl::string, fb::PVZRecordInfo> records;
                         for (auto& [key, entry] : categoryIt->items())
                         {
                             auto it = records.insert( key.c_str() );
@@ -93,18 +72,12 @@ namespace Cypress
 
                         auto* clientCtx = fb::ClientGameContext::GetInstance();
 
-#ifdef CYPRESS_GW1
                         fb::Message* resultMsg = CallFunc<fb::Message*, const char*, void*>(
                             0x140BF1C50,
                         requestMsg.subcategory.c_str(), &records
                         );
 
                         clientCtx->m_messageManager.queueMessage( resultMsg );
-#else
-                        fb::PresencePVZGetByteVaultSubRecordResultMessageBase resultMsg(requestMsg.subcategory, records);
-                        ptrset<uintptr_t>(&resultMsg, 0x0, 0x14230FB48);
-                        resultMsg.m_localPlayerId = 0;
-#endif
                     }
 
                     break;
@@ -114,7 +87,7 @@ namespace Cypress
                     auto& updateMsg = reinterpret_cast<fb::PresencePVZUpdateByteVaultRecordMessage&>(inMessage);
                     CYPRESS_DEBUG_LOGMESSAGE(LogLevel::Debug, "Updating save category: {}", updateMsg.subcategory.c_str());
 
-                    auto& subcat = g_saveFile[updateMsg.subcategory.c_str()];
+                    auto& subcat = m_saveFile[updateMsg.subcategory.c_str()];
                     for (const auto& it : updateMsg.records)
                     {
                         int valueType = it.second.Type;
@@ -130,7 +103,7 @@ namespace Cypress
                     }
 
                     std::ofstream saveout("cypsave.json");
-                    saveout << g_saveFile.dump(2);
+                    saveout << m_saveFile.dump(2);
                     saveout.close();
 
                     break;

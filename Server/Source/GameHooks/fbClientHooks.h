@@ -5,12 +5,6 @@
 #include <fb/SecureReason.h>
 
 DECLARE_HOOK(
-	gw2_unk1,
-	__fastcall,
-	void,
-);
-
-DECLARE_HOOK(
 	fb_Client_enterState,
 	__fastcall,
 	void,

@@ -98,9 +98,9 @@ namespace fb
         }
 #endif
 
-        void disconnect(fb::SecureReason reason, eastl::string& reasonText)
+        void disconnect(fb::SecureReason reason, const eastl::string& reasonText)
         {
-            auto ServerPlayer__disconnect = reinterpret_cast<void (*)(void* inst, fb::SecureReason reason, eastl::string & reasonText)>(OFFSET_SERVERPLAYER_DISCONNECT);
+            auto ServerPlayer__disconnect = reinterpret_cast<void (*)(void* inst, fb::SecureReason reason, const eastl::string & reasonText)>(OFFSET_SERVERPLAYER_DISCONNECT);
             ServerPlayer__disconnect(this, reason, reasonText);
         }
 

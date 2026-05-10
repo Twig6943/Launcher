@@ -43,31 +43,6 @@ DEFINE_HOOK(
 void* g_persistenceClassThing = nullptr;
 
 DEFINE_HOOK(
-	gw2_unk1,
-	__fastcall,
-	void,
-)
-{
-	//CYPRESS_LOGMESSAGE( LogLevel::Debug, "Unk function called!" );
-
-	while (!IsDebuggerPresent())
-		Sleep(1000);
-
-	void* unkPtr = *(void**)0x142B69318;
-	//CYPRESS_LOGMESSAGE( LogLevel::Debug, "Unk ptr: {}", unkPtr );
-	if (unkPtr)
-	{
-		if (!Cypress::g_presenceManager)
-		{
-			Cypress::PresenceManager::Initialize();
-		}
-		//CYPRESS_LOGMESSAGE( LogLevel::Debug, "Unk ptr bool: {}", ptrread<bool>(unkPtr, 0x2D1800));
-	}
-
-	Orig_gw2_unk1();
-}
-
-DEFINE_HOOK(
 	fb_Client_enterState,
 	__fastcall,
 	void,
@@ -83,10 +58,7 @@ DEFINE_HOOK(
 
 	if (state == fb::ClientState_Startup)
 	{
-		if (!Cypress::g_presenceManager)
-		{
-			Cypress::PresenceManager::Initialize();
-		}
+		Cypress::PresenceManager::Create();
 	}
 
 	if (state == fb::ClientState_ConnectToServer)

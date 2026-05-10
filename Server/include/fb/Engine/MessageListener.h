@@ -1,11 +1,10 @@
 #pragma once
 #include <cstdint>
 #include <StringUtil.h>
+#include <fb/Engine/Message.h>
 
 namespace fb
 {
-	class Message;
-
 	class MessageListener
 	{
 	public:

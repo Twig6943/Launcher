@@ -21,6 +21,12 @@ namespace fb
             auto func = reinterpret_cast<void* (*)(ServerConnection*, unsigned int, bool)>(0x14064EF00);
             return func(this, localPlayerId, allowFail);
         }
+
+        void disconnect(SecureReason reason, const char* reasonText)
+        {
+            CallFunc<void, ServerConnection*, SecureReason, const char*>( 0x14064F130,
+            this, reason, reasonText);
+        }
 #endif
 
 #ifdef CYPRESS_BFN

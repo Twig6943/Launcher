@@ -57,7 +57,6 @@ void Cypress::GW2Module::InitGameHooks()
 	// no idea what this is, it creates some kind of persistence related class
 	INIT_HOOK(fb_140DA9B90, OFFSET_FB_140DA9B90);
 	INIT_HOOK(fb_OnlineManager_onGotDisconnected, OFFSET_FB_ONLINEMANAGER_ONGOTDISCONNECTED);
-	//INIT_HOOK(gw2_unk1, 0x140B84470);
 }
 
 void Cypress::GW2Module::InitMemPatches()

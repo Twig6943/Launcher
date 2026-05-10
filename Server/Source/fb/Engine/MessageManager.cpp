@@ -28,4 +28,9 @@ namespace fb
         CallFunc<void, MessageManagerImpl*, Message*, float>( OFFSET_FB_MESSAGEMANAGER_QUEUEMESSAGE,
             m_impl, msg, delay );
     }
+
+    void MessageManager::dispatchMessage( Message* msg )
+    {
+        CallFunc<void, MessageManagerImpl*, Message*>( OFFSET_FB_MESSAGEMANAGER_DISPATCHMESSAGE, m_impl, msg );
+    }
 }

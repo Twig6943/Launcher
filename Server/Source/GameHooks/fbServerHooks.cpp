@@ -5,6 +5,7 @@
 #include <thread>
 #include <Cypress/Core/Program.h>
 #include <Cypress/Core/Logging.h>
+#include <fb/Engine/NetworkableMessage.h>
 #include <fb/Engine/Server.h>
 #include <fb/Engine/ServerGameContext.h>
 

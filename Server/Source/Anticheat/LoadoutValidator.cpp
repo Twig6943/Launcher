@@ -3,6 +3,7 @@
 #include "LoadoutValidator.h"
 #include <unordered_map>
 #include <StringUtil.h>
+#include <EASTL/sort.h>
 
 #include <fb/Engine/ServerPlayer.h>
 #include <fb/TypeInfo/PVZCharacterCustomizationAsset.h>
@@ -117,6 +118,7 @@ void LoadoutValidator::init()
 {
     weaponSets.clear();
     upgradeSets.clear();
+    upgradableWeaponIds.clear();
 
     std::vector<fb::PVZCharacterCustomizationAsset*> foundKits;
 
@@ -182,14 +184,22 @@ void LoadoutValidator::init()
 
                 switch (slot)
                 {
-                case fb::WeaponSlot::WeaponSlot_0: set.primary.insert(weaponHash); break;
+                case fb::WeaponSlot::WeaponSlot_0:
+                    {
+                        upgradableWeaponIds.push_back(weapon->getIdentifier());
+                        set.primary.insert(weaponHash);
+                        break;
+                    }
                 case fb::WeaponSlot::WeaponSlot_1: set.ability1.insert(weaponHash); break;
                 case fb::WeaponSlot::WeaponSlot_2: set.ability2.insert(weaponHash); break;
                 case fb::WeaponSlot::WeaponSlot_3: set.ability3.insert(weaponHash); break;
                 case fb::WeaponSlot::WeaponSlot_4:
-                    set.alternate.insert(weaponHash);
-                    set.allowAlternate = true;
-                    break;
+                    {
+                        upgradableWeaponIds.push_back(weapon->getIdentifier());
+                        set.alternate.insert(weaponHash);
+                        set.allowAlternate = true;
+                        break;
+                    }
                 case fb::WeaponSlot::WeaponSlot_5: set.weaponSlot5.insert(weaponHash); break;
                 case fb::WeaponSlot::WeaponSlot_6: set.weaponSlot6.insert(weaponHash); break;
                 case fb::WeaponSlot::WeaponSlot_7: set.weaponSlot7.insert(weaponHash); break;
@@ -225,6 +235,8 @@ void LoadoutValidator::init()
             }
         }
     }
+
+    std::ranges::sort( upgradableWeaponIds );
 
     g_program->GetServer()->GetAnticheat()->AC_LogMessage(LogLevel::Info, "Weapon and Upgrade sets built successfully");
 }

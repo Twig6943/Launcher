@@ -68,7 +68,6 @@ DEFINE_HOOK(
 	Orig_fb_EnginePeer_init(thisPtr, socketManager, address, titleId, versionId);
 }
 #else
-#define CYPRESS_LOCAL_ONLY
 
 DEFINE_HOOK(
 	fb_EnginePeer_init,
@@ -91,11 +90,6 @@ DEFINE_HOOK(
 		CYPRESS_ASSERT(wsaInit, "WSA failed to initialize!");
 		g_program->SetInitialized(true);
 	}
-
-#ifdef CYPRESS_LOCAL_ONLY
-	Orig_fb_EnginePeer_init(thisPtr, crypto, socketManager, address, titleId, versionId);
-	return;
-#endif
 
 	char overrideAddrBuf[32] = {};
 
