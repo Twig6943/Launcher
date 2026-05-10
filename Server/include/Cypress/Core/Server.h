@@ -10,7 +10,7 @@
 #include <cstdint>
 
 #ifdef CYPRESS_BFN
-#include <Core/Console/ConsoleFunctions.h>
+#include <Cypress/Core/Console/ConsoleFunctions.h>
 #else
 #include <fb/Engine/ConsoleContext.h>
 #endif

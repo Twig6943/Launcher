@@ -3,6 +3,9 @@
 #include <MemUtil.h>
 #include <fb/SecureReason.h>
 #include <EASTL/string.h>
+#ifdef CYPRESS_BFN
+#include <EASTL/new_string.h>
+#endif
 
 #if defined(CYPRESS_GW2) || defined(CYPRESS_GW1)
 #include "fb/TypeInfo/Asset.h"
