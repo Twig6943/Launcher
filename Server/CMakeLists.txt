@@ -39,13 +39,6 @@ FetchContent_Declare(
   GIT_TAG 1e9ad1eb42db11bfcb65461f687c656612d1b555
 )
 
-### EABase
-FetchContent_Declare(
-  EABase
-  GIT_REPOSITORY https://github.com/kitsilanosoftware/EABase.git
-  GIT_TAG 53a97991c69c2f6394a8ff95057743daea6a1f3e
-)
-
 ### json
 FetchContent_Declare(
   nlohmann_json
@@ -62,7 +55,6 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(
   minhook
-  EABase
   nlohmann_json
   monocypher
 )
@@ -109,7 +101,6 @@ target_include_directories(Cypress PRIVATE
     ${CMAKE_SOURCE_DIR}/Source
     ${monocypher_SOURCE_DIR}/src
     ${EASTL_LOCAL_DIR}/include
-    ${eabase_SOURCE_DIR}/include/Common
 )
 
 # Precompiled headers
@@ -150,9 +141,6 @@ else()
 endif()
 
 add_subdirectory(${EA_ROOT_DIR}/EABase)
-add_subdirectory(${EA_ROOT_DIR}/EASTL)
-
-target_include_directories(EASTL PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 # Variant-specific defines + output name
 if(CYPRESS_GW1)
@@ -174,8 +162,8 @@ endif()
 # Link libraries
 target_link_libraries(Cypress PRIVATE
         EABase
-        EASTL
         minhook
+        nlohmann_json
         ws2_32.lib
         winhttp.lib
         bcrypt.lib
