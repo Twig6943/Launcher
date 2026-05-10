@@ -844,7 +844,7 @@ DEFINE_HOOK(
 			thisPtr->getPlayerId(),
 			thisPtr->m_name,
 			reasonStr,
-			fb::SecureReason_ToString(reason));
+			fb::SecureReason_toString(reason));
 
 		if (Cypress_IsEmbeddedMode())
 			Cypress_EmitJsonPlayerEvent("playerLeave", thisPtr->getPlayerId(), thisPtr->m_name, reasonStr);
