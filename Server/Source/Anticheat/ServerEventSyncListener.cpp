@@ -18,7 +18,7 @@ DEFINE_HOOK(fb_ServerEventSyncEntity_Listener_onMessage, __fastcall, void,
 	if (!g_program->GetServer()->GetAnticheat()->GetPreventBlacklistedEventSyncs() || !g_program->GetServer()->GetAnticheat()->GetEnabled())
 		return Orig_fb_ServerEventSyncEntity_Listener_onMessage(a1, message);
 
-	if (!message->is("EventSyncReachedClientMessage"))
+	if (message->m_type != fnvHashConstexpr( "EventSyncReachedClientMessage" ))
 	{
 		g_program->GetServer()->GetAnticheat()->AC_LogMessage(LogLevel::Warning, "Message is not EventSyncReachedClientMessage", message->getType()->getName());
 		return Orig_fb_ServerEventSyncEntity_Listener_onMessage(a1, message);

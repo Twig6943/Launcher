@@ -20,7 +20,7 @@ DEFINE_HOOK(
 	int a5 //unused
 )
 {
-	if (message->is("NetworkSettingsSyncFromClientMessage"))
+	if (message->m_type == fnvHashConstexpr("NetworkSettingsSyncFromClientMessage"))
 	{
 		if (!g_program->GetServer()->GetAnticheat()->GetPreventSyncSettingsFromClients() || !g_program->GetServer()->GetAnticheat()->GetEnabled())
 			return Orig_fb_ServerSettingEntity_onMessage(thisPtr, message, a3, a4, a5);

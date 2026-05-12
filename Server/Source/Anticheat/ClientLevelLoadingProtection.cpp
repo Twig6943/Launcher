@@ -15,7 +15,7 @@ DEFINE_HOOK(
 	if (!g_program->GetServer()->GetAnticheat()->GetPreventClientLevelLoading() || !g_program->GetServer()->GetAnticheat()->GetEnabled())
 		return Orig_fb_PVZServerLevelManager_onMessage(thisPtr, message);
 
-	if (message->is("PVZNetworkLoadLevelMessage"))
+	if (message->m_type == fnvHashConstexpr( "PVZNetworkLoadLevelMessage" ))
 	{
 		g_program->GetServer()->GetAnticheat()->AC_LogMessage(LogLevel::Warning, "Got PVZNetworkLoadLevelMessage");
 		return;
