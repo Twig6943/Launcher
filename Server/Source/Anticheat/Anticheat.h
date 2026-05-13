@@ -20,6 +20,13 @@ namespace fb
 class Anticheat
 {
 public:
+	enum ValidationResult
+	{
+		InvalidDiscard,
+		InvalidKick,
+		Valid
+	};
+
 	static Anticheat& getInstance()
 	{
 		static Anticheat anticheat_instance;
@@ -74,7 +81,7 @@ public:
 	}
 
 	static const char* GetPlayerName(fb::ServerPlayer* player);
-	bool ValidateNetworkableMessage(fb::NetworkableMessage* inMsg, eastl::string* outReasonString);
+	ValidationResult ValidateNetworkableMessage(fb::NetworkableMessage* inMsg, eastl::string* outReasonString);
 
 private:
 	Anticheat() = default;

@@ -193,7 +193,7 @@ const char* Anticheat::GetPlayerName( fb::ServerPlayer* player )
     return "Null player";
 }
 
-bool Anticheat::ValidateNetworkableMessage( fb::NetworkableMessage* inMsg, eastl::string* outReasonString )
+Anticheat::ValidationResult Anticheat::ValidateNetworkableMessage( fb::NetworkableMessage* inMsg, eastl::string* outReasonString )
 {
     fb::ServerPlayer* serverPlayer = nullptr;
     switch ( inMsg->m_type )
@@ -201,7 +201,7 @@ bool Anticheat::ValidateNetworkableMessage( fb::NetworkableMessage* inMsg, eastl
         case fnvHashConstexpr( "NetworkPlayerSelectedCustomizationAssetMessage" ):
             {
                 if ( !GetPreventServerCrash() )
-                    return true;
+                    return Valid;
 
                 if ( ptrread<void*>( inMsg, 0x48 ) == nullptr )
                 {
@@ -212,7 +212,7 @@ bool Anticheat::ValidateNetworkableMessage( fb::NetworkableMessage* inMsg, eastl
                         AC_LogMessage( LogLevel::Debug,
                                        "[{}] Couldn't validate LocalPlayer!",
                                        inMsg->getType()->getName() );
-                        return false;
+                        return InvalidKick;
                     }
 
                     serverPlayer = ptrread<fb::ServerPlayer*>( unk, 0xF8 );
@@ -224,22 +224,20 @@ bool Anticheat::ValidateNetworkableMessage( fb::NetworkableMessage* inMsg, eastl
 
                     *outReasonString = "Invalid object";
 
-                    return false;
+                    return InvalidKick;
                 }
 
-                return true;
+                return Valid;
             }
             break;
         case fnvHashConstexpr( "PVZGameplaySelfReviveMessage" ):
             {
                 if ( !GetPreventSelfRevive() )
-                    return true;
+                    return Valid;
 
                 fb::ServerGameContext* gameContext = fb::ServerGameContext::GetInstance();
-                if ( !gameContext )
-                    return true;
-                if ( !gameContext->getLevel() )
-                    return true;
+                if ( !gameContext || !gameContext->getLevel() )
+                    return Valid;
 
                 auto* levelSetup = reinterpret_cast<fb::LevelSetup*>(uintptr_t( gameContext->getLevel() ) + 0x28);
                 const char* mode = levelSetup->getInclusionOption( "GameMode" );
@@ -250,7 +248,7 @@ bool Anticheat::ValidateNetworkableMessage( fb::NetworkableMessage* inMsg, eastl
                         strstr( mode, "BossHunt" );
 
                 if ( isAllowedMode )
-                    return true;
+                    return Valid;
 
                 void* unk = inMsg->m_serverConnection->validateLocalPlayer( inMsg->GetLocalPlayerId(), false );
 
@@ -259,7 +257,7 @@ bool Anticheat::ValidateNetworkableMessage( fb::NetworkableMessage* inMsg, eastl
                     AC_LogMessage( LogLevel::Debug,
                                    "[{}] Couldn't validate LocalPlayer!",
                                    inMsg->getType()->getName() );
-                    return false;
+                    return InvalidKick;
                 }
 
                 serverPlayer = ptrread<fb::ServerPlayer*>( unk, 0xF8 );
@@ -269,21 +267,17 @@ bool Anticheat::ValidateNetworkableMessage( fb::NetworkableMessage* inMsg, eastl
                                GetPlayerName( serverPlayer ),
                                inMsg->getType()->getName() );
 
-                return false;
+                return InvalidKick;
             }
             break;
         case fnvHashConstexpr( "PVZGameplayServerSwapCharactersMessage" ):
             {
                 if ( !GetPreventPlayerSwap() )
-                    return true;
+                    return Valid;
 
                 fb::ServerGameContext* gameContext = fb::ServerGameContext::GetInstance();
-                if ( !gameContext )
-                    return true;
-                if ( !gameContext->m_serverPlayerManager )
-                    return true;
-                if ( !gameContext->getLevel() )
-                    return true;
+                if ( !gameContext || !gameContext->m_serverPlayerManager || !gameContext->getLevel())
+                    return Valid;
 
                 auto* levelSetup = reinterpret_cast<fb::LevelSetup*>(uintptr_t( gameContext->getLevel() ) + 0x28);
 
@@ -298,13 +292,13 @@ bool Anticheat::ValidateNetworkableMessage( fb::NetworkableMessage* inMsg, eastl
 
                 int idx = ptrread<int>( inMsg, 0x4C );
                 if ( idx < 0 || idx >= gameContext->m_serverPlayerManager->m_players.size() )
-                    return false;
+                    return InvalidKick;
 
                 fb::ServerPlayer* player = gameContext->m_serverPlayerManager->m_players[idx];
 
                 //only allow player swapping on Ops and BossHunt
                 if ( !isAllowedMode )
-                    return false;
+                    return InvalidKick;
 
                 //the TargetPlayer must be an AI
                 if ( player != nullptr && !player->isAIOrPersistentAIPlayer() )
@@ -316,7 +310,7 @@ bool Anticheat::ValidateNetworkableMessage( fb::NetworkableMessage* inMsg, eastl
                         AC_LogMessage( LogLevel::Debug,
                                        "[{}] Couldn't validate LocalPlayer!",
                                        inMsg->getType()->getName() );
-                        return false;
+                        return InvalidKick;
                     }
 
                     serverPlayer = ptrread<fb::ServerPlayer*>( unk, 0xF8 );
@@ -326,10 +320,10 @@ bool Anticheat::ValidateNetworkableMessage( fb::NetworkableMessage* inMsg, eastl
                                    GetPlayerName( serverPlayer ),
                                    inMsg->getType()->getName() );
 
-                    return false;
+                    return InvalidKick;
                 }
 
-                return true;
+                return Valid;
             }
             break;
         case fnvHashConstexpr( "NetworkPlayerSelectedWeaponMessage" ):
@@ -340,7 +334,7 @@ bool Anticheat::ValidateNetworkableMessage( fb::NetworkableMessage* inMsg, eastl
                     AC_LogMessage( LogLevel::Debug,
                                    "[{}] Couldn't validate LocalPlayer!",
                                    inMsg->getType()->getName() );
-                    return false;
+                    return InvalidKick;
                 }
 
                 serverPlayer = ptrread<fb::ServerPlayer*>( unk, 0xF8 );
@@ -351,20 +345,20 @@ bool Anticheat::ValidateNetworkableMessage( fb::NetworkableMessage* inMsg, eastl
                 if ( !unlockAssetPtr )
                 {
                     *outReasonString = "Invalid data";
-                    return false;
+                    return InvalidKick;
                 }
 
                 bool isUpgradable = std::ranges::binary_search( LoadoutValidator::upgradableWeaponIds,
                                                                 unlockAssetPtr->getIdentifier() );
 
                 if ( !isUpgradable )
-                    return true;
+                    return Valid;
 
                 int upgradeCount = upgrades->size();
                 if ( upgradeCount > 8 || upgradeCount < 0 )
                 {
                     *outReasonString = "Invalid data";
-                    return false;
+                    return InvalidKick;
                 }
 
                 for ( int i = 0; i < upgradeCount; i++ )
@@ -373,18 +367,18 @@ bool Anticheat::ValidateNetworkableMessage( fb::NetworkableMessage* inMsg, eastl
                     if ( !upgradePtr )
                     {
                         *outReasonString = "Invalid data";
-                        return false;
+                        return InvalidKick;
                     }
                 }
 
-                return true;
+                return Valid;
             }
             break;
         case fnvHashConstexpr( "ClientBuffApplyFromClientMessage" ):
         case fnvHashConstexpr( "ClientBuffKillFromClientMessage" ):
             {
                 if ( !GetPreventClientBuffs() )
-                    return true;
+                    return Valid;
 
                 const char* apply_or_kill = inMsg->m_type == fnvHashConstexpr( "ClientBuffApplyFromClientMessage" )
                                                 ? "apply"
@@ -397,21 +391,28 @@ bool Anticheat::ValidateNetworkableMessage( fb::NetworkableMessage* inMsg, eastl
                     AC_LogMessage( LogLevel::Debug,
                                    "[{}] Couldn't validate LocalPlayer!",
                                    inMsg->getType()->getName() );
-                    return false;
+                    return InvalidKick;
+                }
+
+                auto* buffData = ptrread<fb::Asset*>(inMsg, 0x48);
+                if (!buffData || !buffData->Name)
+                {
+                    *outReasonString = "Invalid buff";
+                    return InvalidKick;
                 }
 
                 serverPlayer = ptrread<fb::ServerPlayer*>( unk, 0xF8 );
 
-                AC_LogMessage( LogLevel::Debug,
+                AC_LogMessage( LogLevel::Warning,
                                "{} tried to {} a client buff ({})",
                                GetPlayerName( serverPlayer ),
                                apply_or_kill,
-                               inMsg->getType()->getName() );
+                               buffData->Name );
 
-                return true;
+                return InvalidDiscard;
             }
             break;
     }
-    return true;
+    return Valid;
 }
 #endif

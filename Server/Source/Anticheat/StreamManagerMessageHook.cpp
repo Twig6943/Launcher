@@ -30,13 +30,21 @@ DEFINE_HOOK(
 	{
 		Anticheat* anticheat = g_program->GetServer()->GetAnticheat();
 
-		if (!anticheat->ValidateNetworkableMessage( addedMsg, &addedMsg->m_serverConnection->m_reasonText ))
+		Anticheat::ValidationResult result = anticheat->ValidateNetworkableMessage( addedMsg, &addedMsg->m_serverConnection->m_reasonText );
+		switch (result)
 		{
-			addedMsg->m_validationResult = fb::NetworkableMessage::ValidationResult_FailDiscard;
-			addedMsg->m_serverConnection->m_shouldDisconnect = true;
-			addedMsg->m_serverConnection->m_disconnectReason = fb::SecureReason_KickedViaFairFight;
-
-			CYPRESS_LOGMESSAGE( LogLevel::Warning, "Anticheat: kicking player for {}", addedMsg->m_serverConnection->m_reasonText.c_str() );
+			case Anticheat::Valid: return addedMsg;
+			case Anticheat::InvalidDiscard:
+				addedMsg->m_validationResult = fb::NetworkableMessage::ValidationResult_FailDiscard;
+				break;
+			case Anticheat::InvalidKick:
+				addedMsg->m_validationResult = fb::NetworkableMessage::ValidationResult_FailDiscard;
+				addedMsg->m_serverConnection->m_shouldDisconnect = true;
+				addedMsg->m_serverConnection->m_disconnectReason = fb::SecureReason_KickedViaFairFight;
+				CYPRESS_LOGMESSAGE( LogLevel::Warning, "Anticheat: kicking player for {} ({} was marked as invalid)",
+					addedMsg->m_serverConnection->m_reasonText.c_str(),
+					addedMsg->getType()->getName() );
+				break;
 		}
 
 		//todo: add an exception for when the player swap to an AI in ops or bosshunt
