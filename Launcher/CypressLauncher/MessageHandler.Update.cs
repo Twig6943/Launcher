@@ -235,6 +235,15 @@ public partial class MessageHandler
 			return;
 		}
 
+		string currentVersion = channel == "launcher"
+			? GetLauncherVersion()
+			: GetSavedServerDllVersion(GetLauncherVersion());
+		if (!IsNewerVersion(currentVersion, latestVersion))
+		{
+			Send(new JObject { ["type"] = "updateError", ["channel"] = channel, ["error"] = "update version is not newer than the installed version" });
+			return;
+		}
+
 		Task.Run(async () =>
 		{
 			try

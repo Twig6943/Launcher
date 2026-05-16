@@ -195,7 +195,7 @@ function renderServerList() {
         if (!status) {
             html += '<span class="server-entry-ping unknown">?</span>';
         } else if (status.ok) {
-            var pText = status.players !== undefined ? status.players : '?';
+            var pText = (status.players !== undefined && status.players !== null && isFinite(+status.players)) ? Math.floor(+status.players) : '?';
             html += '<span class="server-entry-players">' + pText + '</span>';
             html += '<span class="server-entry-ping online-dot"></span>';
         } else {
@@ -228,9 +228,11 @@ function escapeAttr(str) {
 }
 
 function openModpackLink(url) {
-    if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-        send('openExternal', { url: url });
-    }
+    try {
+        var parsed = new URL(url);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
+        send('openExternal', { url: parsed.href });
+    } catch (_) {}
 }
 
 // ping a single server
