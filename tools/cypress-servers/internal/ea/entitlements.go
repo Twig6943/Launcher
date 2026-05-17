@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -67,34 +68,47 @@ func FetchGameEntitlements(accessToken string) (map[string]string, error) {
 
 	entries := listResp.Entitlements.Entitlement
 
-	// API returned URIs instead of objects - fetch each one individually
+	// API returned URIs instead of objects (fetch in parallel due to timeouts.)
 	if len(entries) == 0 && len(listResp.Entitlements.EntitlementUri) > 0 {
-		log.Printf("[ea] entitlements: got %d URIs, fetching individually", len(listResp.Entitlements.EntitlementUri))
-		for _, uri := range listResp.Entitlements.EntitlementUri {
-			fullURL := "https://gateway.ea.com/proxy/identity" + uri
-			ereq, err := http.NewRequest("GET", fullURL, nil)
-			if err != nil {
-				continue
-			}
-			ereq.Header.Set("Authorization", "Bearer "+accessToken)
-			eresp, err := httpClient.Do(ereq)
-			if err != nil {
-				continue
-			}
-			ebody, _ := io.ReadAll(io.LimitReader(eresp.Body, 4096))
-			eresp.Body.Close()
-			if eresp.StatusCode != 200 {
-				continue
-			}
-			var single struct {
-				Entitlement entitlementEntry `json:"entitlement"`
-			}
-			if json.Unmarshal(ebody, &single) == nil && single.Entitlement.GroupName != "" {
-				e := single.Entitlement
-				log.Printf("[ea] entitlements: uri entry group=%s type=%s status=%s id=%d", e.GroupName, e.EntitlementType, e.Status, e.EntitlementID)
+		uris := listResp.Entitlements.EntitlementUri
+		log.Printf("[ea] entitlements: got %d URIs, fetching in parallel", len(uris))
+		results := make([]entitlementEntry, len(uris))
+		var wg sync.WaitGroup
+		for i, uri := range uris {
+			wg.Add(1)
+			go func(idx int, u string) {
+				defer wg.Done()
+				fullURL := "https://gateway.ea.com/proxy/identity" + u
+				ereq, err := http.NewRequest("GET", fullURL, nil)
+				if err != nil {
+					return
+				}
+				ereq.Header.Set("Authorization", "Bearer "+accessToken)
+				eresp, err := httpClient.Do(ereq)
+				if err != nil {
+					return
+				}
+				ebody, _ := io.ReadAll(io.LimitReader(eresp.Body, 4096))
+				eresp.Body.Close()
+				if eresp.StatusCode != 200 {
+					return
+				}
+				var single struct {
+					Entitlement entitlementEntry `json:"entitlement"`
+				}
+				if json.Unmarshal(ebody, &single) == nil && single.Entitlement.GroupName != "" {
+					e := single.Entitlement
+					log.Printf("[ea] entitlements: uri entry group=%s type=%s status=%s id=%d", e.GroupName, e.EntitlementType, e.Status, e.EntitlementID)
+					results[idx] = e
+				} else {
+					log.Printf("[ea] entitlements: uri %s parse failed or empty groupName. body: %.256s", u, string(ebody))
+				}
+			}(i, uri)
+		}
+		wg.Wait()
+		for _, e := range results {
+			if e.GroupName != "" {
 				entries = append(entries, e)
-			} else {
-				log.Printf("[ea] entitlements: uri %s parse failed or empty groupName. body: %.256s", uri, string(ebody))
 			}
 		}
 	}
@@ -107,7 +121,7 @@ func FetchGameEntitlements(accessToken string) (map[string]string, error) {
 		if e.EntitlementType != "ONLINE_ACCESS" {
 			continue
 		}
-		if e.Status != "ACTIVE" {
+		if e.Status != "ACTIVE" && e.Status != "BANNED" { // ea please dont kill me
 			continue
 		}
 		if _, exists := result[e.GroupName]; !exists {
