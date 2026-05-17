@@ -141,7 +141,7 @@ public partial class MessageHandler
 		if (string.Equals(hostConnectionMode, "Relay", StringComparison.OrdinalIgnoreCase)
 			&& string.IsNullOrWhiteSpace(hostRelayAddress))
 		{
-			hostRelayAddress = LauncherConfig.DefaultRelayAddress;
+			hostRelayAddress = LauncherConfig.RelayNA;
 		}
 		string level = ((string?)msg["level"]) ?? "";
 		string inclusion = ((string?)msg["inclusion"]) ?? "";
@@ -266,7 +266,9 @@ public partial class MessageHandler
 
 		Environment.SetEnvironmentVariable("GW_LAUNCH_ARGS", launchArgs);
 		if (m_identityJwt == null) LoadIdentityFromDisk();
+		m_identityKey ??= LoadOrCreateIdentityKey();
 		Environment.SetEnvironmentVariable("CYPRESS_IDENTITY_JWT", m_identityJwt);
+		Environment.SetEnvironmentVariable("CYPRESS_IDENTITY_KEY", GetIdentityPrivateKeyHex());
 		try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "cypress_jwt_debug.txt"), $"{DateTime.Now:HH:mm:ss} SERVER launch jwt={(m_identityJwt != null ? "present(" + m_identityJwt.Length + ")" : "NULL")}\n"); } catch {}
 		if (!CopyServerDLL()) return;
 

@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Security.Cryptography;
@@ -23,6 +24,10 @@ public partial class MessageHandler
 	private string? m_identityNickname;
 	private double m_identityExpiresAt;
 	private Key? m_identityKey;
+	private string? m_identityEntidGW1;
+	private string? m_identityEntidGW2;
+	private string? m_identityEntidBFN;
+	private bool m_eaRelinked;
 
 	private static readonly string s_identityKeyFilename = "identity_key.bin";
 	private static readonly string s_identitySavedataKey = "Identity";
@@ -94,14 +99,7 @@ public partial class MessageHandler
 
 		if (m_identityJwt != null && m_identityExpiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds())
 		{
-			Send(new JObject
-			{
-				["type"] = "identityStatus",
-				["registered"] = true,
-				["username"] = m_identityUsername,
-				["nickname"] = m_identityNickname,
-				["accountId"] = m_identityAccountId
-			});
+			SendIdentityStatus(registered: true);
 
 			// auto-refresh if <2 days to expiry
 			double secsLeft = m_identityExpiresAt - DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -114,21 +112,7 @@ public partial class MessageHandler
 			Task.Run(async () =>
 			{
 				bool ok = await RefreshIdentityAsync();
-				if (ok)
-				{
-					Send(new JObject
-					{
-						["type"] = "identityStatus",
-						["registered"] = true,
-						["username"] = m_identityUsername,
-						["nickname"] = m_identityNickname,
-						["accountId"] = m_identityAccountId
-					});
-				}
-				else
-				{
-					Send(new JObject { ["type"] = "identityStatus", ["registered"] = false });
-				}
+				SendIdentityStatus(registered: ok);
 			});
 		}
 		else
@@ -185,11 +169,14 @@ public partial class MessageHandler
 				m_identityJwt = (string?)respBody["jwt"];
 				m_identityAccountId = (string?)respBody["account_id"];
 				m_identityUsername = (string?)respBody["username"];
+				m_eaRelinked = false;
 
 				m_identityExpiresAt = ParseJwtExpiry(m_identityJwt);
+				ParseJwtIdentity(m_identityJwt);
 				SaveIdentityToDisk();
 
 				var backupCodes = respBody["backup_codes"] as JArray;
+				var ownedGames = BuildOwnedGamesList();
 
 				Send(new JObject
 				{
@@ -197,7 +184,8 @@ public partial class MessageHandler
 					["ok"] = true,
 					["username"] = m_identityUsername,
 					["accountId"] = m_identityAccountId,
-					["backupCodes"] = backupCodes
+					["backupCodes"] = backupCodes,
+					["ownedGames"] = new JArray(ownedGames)
 				});
 			}
 			catch (Exception ex)
@@ -322,14 +310,7 @@ public partial class MessageHandler
 				if (secsLeft < 2 * 24 * 3600)
 					await RefreshIdentityAsync();
 
-				Send(new JObject
-				{
-					["type"] = "identityStatus",
-					["registered"] = true,
-					["username"] = m_identityUsername,
-					["nickname"] = m_identityNickname,
-					["accountId"] = m_identityAccountId
-				});
+				SendIdentityStatus(registered: true);
 				return;
 			}
 
@@ -338,14 +319,7 @@ public partial class MessageHandler
 			{
 				if (await RefreshIdentityAsync())
 				{
-					Send(new JObject
-					{
-						["type"] = "identityStatus",
-						["registered"] = true,
-						["username"] = m_identityUsername,
-						["nickname"] = m_identityNickname,
-						["accountId"] = m_identityAccountId
-					});
+					SendIdentityStatus(registered: true);
 					return;
 				}
 			}
@@ -370,35 +344,55 @@ public partial class MessageHandler
 					var respBody = JObject.Parse(await resp.Content.ReadAsStringAsync());
 					if ((bool)(respBody["registered"] ?? false))
 					{
-						// ea account already has an identity, update local key + get jwt
 						m_identityKey = LoadOrCreateIdentityKey();
 						m_identityJwt = (string?)respBody["jwt"];
 						m_identityAccountId = (string?)respBody["account_id"];
 						m_identityUsername = (string?)respBody["username"];
+						m_eaRelinked = (bool)(respBody["ea_relinked"] ?? false);
 						m_identityExpiresAt = ParseJwtExpiry(m_identityJwt);
 						ParseJwtIdentity(m_identityJwt);
 						SaveIdentityToDisk();
 
-						Send(new JObject
-						{
-							["type"] = "identityStatus",
-							["registered"] = true,
-							["username"] = m_identityUsername,
-							["nickname"] = m_identityNickname,
-							["accountId"] = m_identityAccountId
-						});
+						SendIdentityStatus(registered: true);
 						return;
 					}
 				}
 			}
 
-			// no identity exists, tell frontend to show registration
-			Send(new JObject { ["type"] = "identityStatus", ["registered"] = false });
+			// no identity exists so lets fetch owned games to show in registration confirmation
+			var ownedGames = await FetchOwnedGamesFromEAAsync();
+			Send(new JObject
+			{
+				["type"] = "identityStatus",
+				["registered"] = false,
+				["eaDisplayName"] = m_authDisplayName,
+				["ownedGames"] = new JArray(ownedGames)
+			});
 		}
 		catch
 		{
 			Send(new JObject { ["type"] = "identityStatus", ["registered"] = false });
 		}
+	}
+
+	private void SendIdentityStatus(bool registered)
+	{
+		if (!registered)
+		{
+			Send(new JObject { ["type"] = "identityStatus", ["registered"] = false });
+			return;
+		}
+		var ownedGames = BuildOwnedGamesList();
+		Send(new JObject
+		{
+			["type"] = "identityStatus",
+			["registered"] = true,
+			["username"] = m_identityUsername,
+			["nickname"] = m_identityNickname,
+			["accountId"] = m_identityAccountId,
+			["eaRelinked"] = m_eaRelinked,
+			["ownedGames"] = new JArray(ownedGames)
+		});
 	}
 
 	private string? GetIdentityPrivateKeyHex()
@@ -504,15 +498,7 @@ public partial class MessageHandler
 					m_identityExpiresAt = ParseJwtExpiry(m_identityJwt);
 					ParseJwtIdentity(m_identityJwt);
 					SaveIdentityToDisk();
-
-					Send(new JObject
-					{
-						["type"] = "identityStatus",
-						["registered"] = true,
-						["username"] = m_identityUsername,
-						["nickname"] = m_identityNickname,
-						["accountId"] = m_identityAccountId
-					});
+					SendIdentityStatus(registered: true);
 				}
 				else
 				{
@@ -555,8 +541,20 @@ public partial class MessageHandler
 			m_identityAccountId = (string?)json["sub"];
 			m_identityUsername = (string?)json["username"];
 			m_identityNickname = (string?)json["nickname"];
+			m_identityEntidGW1 = (string?)json["entid_gw1"];
+			m_identityEntidGW2 = (string?)json["entid_gw2"];
+			m_identityEntidBFN = (string?)json["entid_bfn"];
 		}
 		catch { }
+	}
+
+	private List<string> BuildOwnedGamesList()
+	{
+		var games = new List<string>();
+		if (!string.IsNullOrEmpty(m_identityEntidGW1)) games.Add("Garden Warfare 1");
+		if (!string.IsNullOrEmpty(m_identityEntidGW2)) games.Add("Garden Warfare 2");
+		if (!string.IsNullOrEmpty(m_identityEntidBFN)) games.Add("Battle for Neighborville");
+		return games;
 	}
 
 	private void OnSetNickname(JObject msg)

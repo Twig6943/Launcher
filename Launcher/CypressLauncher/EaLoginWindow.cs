@@ -85,11 +85,10 @@ internal sealed class EaLoginWindow : Form
 				"ea-auth");
 			Directory.CreateDirectory(userDataDir);
 			Log("user data dir: " + userDataDir);
-			m_webView.CreationProperties = new CoreWebView2CreationProperties
-			{
-				UserDataFolder = userDataDir
-			};
-			await m_webView.EnsureCoreWebView2Async();
+			var env = await CoreWebView2Environment.CreateAsync(null, userDataDir);
+			var opts = env.CreateCoreWebView2ControllerOptions();
+			opts.IsInPrivateModeEnabled = true;
+			await m_webView.EnsureCoreWebView2Async(env, opts);
 			m_webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
 			m_webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
 			m_webView.CoreWebView2.Settings.IsStatusBarEnabled = false;

@@ -1,4 +1,7 @@
 {
   "masterUrl": "https://api-cypress.v0e.dev",
-  "defaultRelayAddress": "relay.v0e.dev:25200"
+  "relayServers": {
+    "na": "na-relay.v0e.dev:25200",
+    "eu": "eu-relay.v0e.dev:25200"
+  }
 }

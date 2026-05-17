@@ -114,6 +114,12 @@ window.external.receiveMessage(function (msg) {
         case 'nicknameResult':
             if (typeof handleNicknameResult === 'function') handleNicknameResult(data);
             break;
+        case 'refreshEntitlementsResult':
+            if (typeof handleRefreshEntitlementsResult === 'function') handleRefreshEntitlementsResult(data);
+            break;
+        case 'relinkEAResult':
+            if (typeof handleRelinkEAResult === 'function') handleRelinkEAResult(data);
+            break;
         case 'status': showStatus(data.text, data.level || 'info'); break;
         case 'gameDir': setGameDir(data.path); break;
         case 'loadUserData': loadUserData(data); break;

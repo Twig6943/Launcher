@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"cypress-servers/internal/ea"
+
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -43,7 +45,11 @@ const identitySchema = `
 		ea_pid TEXT NOT NULL DEFAULT '',
 		ea_name TEXT NOT NULL DEFAULT '',
 		registered_ip TEXT NOT NULL DEFAULT '',
-		created_at REAL NOT NULL
+		created_at REAL NOT NULL,
+		entid_gw1 TEXT NOT NULL DEFAULT '',
+		entid_gw2 TEXT NOT NULL DEFAULT '',
+		entid_bfn TEXT NOT NULL DEFAULT '',
+		ea_relinked INTEGER NOT NULL DEFAULT 0
 	);
 	CREATE INDEX IF NOT EXISTS idx_accounts_username ON accounts(username);
 	CREATE INDEX IF NOT EXISTS idx_accounts_hwid_hash ON accounts(hwid_hash);
@@ -71,8 +77,12 @@ func initIdentityDB(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	// migration: add nickname column if missing
+	// migrations: add columns if missing on existing dbs
 	db.Exec("ALTER TABLE accounts ADD COLUMN nickname TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE accounts ADD COLUMN entid_gw1 TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE accounts ADD COLUMN entid_gw2 TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE accounts ADD COLUMN entid_bfn TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE accounts ADD COLUMN ea_relinked INTEGER NOT NULL DEFAULT 0")
 	return nil
 }
 
@@ -133,6 +143,9 @@ type JWTClaims struct {
 	PKFingerprint string `json:"pk_fp"` // sha256 of public key
 	EAPID         string `json:"ea_pid,omitempty"`
 	EAName        string `json:"ea_name,omitempty"`
+	EntidGW1      string `json:"entid_gw1,omitempty"` // GW1 ONLINE_ACCESS entitlement id
+	EntidGW2      string `json:"entid_gw2,omitempty"` // GW2 ONLINE_ACCESS entitlement id
+	EntidBFN      string `json:"entid_bfn,omitempty"` // BFN ONLINE_ACCESS entitlement id
 	Iat           int64  `json:"iat"`
 	Exp           int64  `json:"exp"`
 }
@@ -211,6 +224,13 @@ func pkFingerprint(pub ed25519.PublicKey) string {
 	return hex.EncodeToString(h[:16]) // first 16 bytes = 32 hex chars
 }
 
+// loadEntids returns [entid_gw1, entid_gw2, entid_bfn] for an account, empty strings if not set.
+func (s *masterState) loadEntids(accountID string) [3]string {
+	var gw1, gw2, bfn string
+	s.db.QueryRow("SELECT entid_gw1, entid_gw2, entid_bfn FROM accounts WHERE account_id = ?", accountID).Scan(&gw1, &gw2, &bfn)
+	return [3]string{gw1, gw2, bfn}
+}
+
 // backup codes
 
 func generateBackupCodes() (plaintexts []string, hashes []string, err error) {
@@ -263,7 +283,8 @@ func (s *masterState) handleCheckIdentity(w http.ResponseWriter, r *http.Request
 	}
 
 	var accountID, username, storedPubKey, nickname string
-	err := s.db.QueryRow("SELECT account_id, username, public_key, nickname FROM accounts WHERE ea_pid = ?", eaPID).Scan(&accountID, &username, &storedPubKey, &nickname)
+	var eaRelinked int
+	err := s.db.QueryRow("SELECT account_id, username, public_key, nickname, ea_relinked FROM accounts WHERE ea_pid = ?", eaPID).Scan(&accountID, &username, &storedPubKey, &nickname, &eaRelinked)
 	if err != nil {
 		jsonResp(w, 200, map[string]any{"ok": true, "registered": false})
 		return
@@ -285,6 +306,7 @@ func (s *masterState) handleCheckIdentity(w http.ResponseWriter, r *http.Request
 	// reissue jwt
 	pubKeyBytes, _ := hex.DecodeString(usePubKey)
 	pubKey := ed25519.PublicKey(pubKeyBytes)
+	entids := s.loadEntids(accountID)
 	claims := JWTClaims{
 		Sub:           accountID,
 		Username:      username,
@@ -292,17 +314,21 @@ func (s *masterState) handleCheckIdentity(w http.ResponseWriter, r *http.Request
 		PKFingerprint: pkFingerprint(pubKey),
 		EAPID:         eaPID,
 		EAName:        eaName,
+		EntidGW1:      entids[0],
+		EntidGW2:      entids[1],
+		EntidBFN:      entids[2],
 		Iat:           time.Now().Unix(),
 		Exp:           time.Now().Add(jwtExpiry).Unix(),
 	}
 	jwt := issueJWT(s.signingKey, claims)
 
 	jsonResp(w, 200, map[string]any{
-		"ok":         true,
-		"registered": true,
-		"account_id": accountID,
-		"username":   username,
-		"jwt":        jwt,
+		"ok":          true,
+		"registered":  true,
+		"account_id":  accountID,
+		"username":    username,
+		"jwt":         jwt,
+		"ea_relinked": eaRelinked != 0,
 	})
 }
 
@@ -340,7 +366,7 @@ func (s *masterState) handleAuthRegister(w http.ResponseWriter, r *http.Request)
 	// validate public key (ed25519 = 32 bytes)
 	pubKeyBytes, err := hex.DecodeString(pubKeyHex)
 	if err != nil || len(pubKeyBytes) != ed25519.PublicKeySize {
-		errResp(w, 400, "Invalid public key — expected 64 hex chars (32 bytes Ed25519)")
+		errResp(w, 400, "Invalid public key")
 		return
 	}
 
@@ -358,6 +384,7 @@ func (s *masterState) handleAuthRegister(w http.ResponseWriter, r *http.Request)
 		// update pubkey + hwid if changed
 		s.db.Exec("UPDATE accounts SET public_key = ?, hwid_hash = ? WHERE account_id = ?", pubKeyHex, hwidHash, existingID)
 		pubKey := ed25519.PublicKey(pubKeyBytes)
+		entids := s.loadEntids(existingID)
 		claims := JWTClaims{
 			Sub:           existingID,
 			Username:      existingUser,
@@ -365,6 +392,9 @@ func (s *masterState) handleAuthRegister(w http.ResponseWriter, r *http.Request)
 			PKFingerprint: pkFingerprint(pubKey),
 			EAPID:         eaPID,
 			EAName:        eaName,
+			EntidGW1:      entids[0],
+			EntidGW2:      entids[1],
+			EntidBFN:      entids[2],
 			Iat:           time.Now().Unix(),
 			Exp:           time.Now().Add(jwtExpiry).Unix(),
 		}
@@ -387,13 +417,9 @@ func (s *masterState) handleAuthRegister(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// check hwid isn't banned
-	var banReason string
-	err = s.db.QueryRow("SELECT reason FROM global_bans WHERE hwid = ? LIMIT 1", hwidHash).Scan(&banReason)
-	if err == nil {
-		errResp(w, 403, "Hardware is banned")
-		return
-	}
+	// hwid ban check disabled (hash collisions)
+	// err = s.db.QueryRow("SELECT reason FROM global_bans WHERE hwid = ? LIMIT 1", hwidHash).Scan(&banReason)
+	// if err == nil { errResp(w, 403, "Hardware is banned"); return }
 
 	// check username availability
 	err = s.db.QueryRow("SELECT account_id FROM accounts WHERE username = ?", username).Scan(&existing)
@@ -456,12 +482,16 @@ func (s *masterState) handleAuthRegister(w http.ResponseWriter, r *http.Request)
 
 	// issue jwt
 	pubKey := ed25519.PublicKey(pubKeyBytes)
+	entids := s.loadEntids(accountID)
 	claims := JWTClaims{
 		Sub:           accountID,
 		Username:      username,
 		PKFingerprint: pkFingerprint(pubKey),
 		EAPID:         eaPID,
 		EAName:        eaName,
+		EntidGW1:      entids[0],
+		EntidGW2:      entids[1],
+		EntidBFN:      entids[2],
 		Iat:           time.Now().Unix(),
 		Exp:           time.Now().Add(jwtExpiry).Unix(),
 	}
@@ -533,7 +563,7 @@ func (s *masterState) handleAuthRefreshIdentity(w http.ResponseWriter, r *http.R
 	}
 
 	// verify challenge signature proves they hold the private key
-	// challenge = sha256(jwt) — the client signs the hash of their current jwt
+	// challenge = sha256(jwt)
 	userPubBytes, _ := hex.DecodeString(storedPubKeyHex)
 	userPub := ed25519.PublicKey(userPubBytes)
 	challenge := sha256.Sum256([]byte(token))
@@ -544,6 +574,7 @@ func (s *masterState) handleAuthRefreshIdentity(w http.ResponseWriter, r *http.R
 	}
 
 	// reissue jwt
+	entids := s.loadEntids(claims.Sub)
 	newClaims := JWTClaims{
 		Sub:           claims.Sub,
 		Username:      claims.Username,
@@ -551,6 +582,9 @@ func (s *masterState) handleAuthRefreshIdentity(w http.ResponseWriter, r *http.R
 		PKFingerprint: claims.PKFingerprint,
 		EAPID:         eaPID,
 		EAName:        eaName,
+		EntidGW1:      entids[0],
+		EntidGW2:      entids[1],
+		EntidBFN:      entids[2],
 		Iat:           time.Now().Unix(),
 		Exp:           time.Now().Add(jwtExpiry).Unix(),
 	}
@@ -676,12 +710,9 @@ func (s *masterState) handleAuthRebind(w http.ResponseWriter, r *http.Request) {
 
 	newHWIDHash := hashHWID(newHWID, s.hwidSalt)
 
-	// check new hwid isn't banned
-	err = s.db.QueryRow("SELECT reason FROM global_bans WHERE hwid = ? LIMIT 1", newHWIDHash).Scan(&banReason)
-	if err == nil {
-		errResp(w, 403, "New hardware is banned")
-		return
-	}
+	// hwid ban check disabled (hash collisions)
+	// err = s.db.QueryRow("SELECT reason FROM global_bans WHERE hwid = ? LIMIT 1", newHWIDHash).Scan(&banReason)
+	// if err == nil { errResp(w, 403, "New hardware is banned"); return }
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -704,6 +735,7 @@ func (s *masterState) handleAuthRebind(w http.ResponseWriter, r *http.Request) {
 
 	// issue new jwt
 	newPub := ed25519.PublicKey(newPubBytes)
+	entids := s.loadEntids(accountID)
 	claims := JWTClaims{
 		Sub:           accountID,
 		Username:      username,
@@ -711,6 +743,9 @@ func (s *masterState) handleAuthRebind(w http.ResponseWriter, r *http.Request) {
 		PKFingerprint: pkFingerprint(newPub),
 		EAPID:         eaPID,
 		EAName:        eaName,
+		EntidGW1:      entids[0],
+		EntidGW2:      entids[1],
+		EntidBFN:      entids[2],
 		Iat:           time.Now().Unix(),
 		Exp:           time.Now().Add(jwtExpiry).Unix(),
 	}
@@ -743,23 +778,32 @@ func (s *masterState) handleAuthBanlist(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	bannedAccountSet := make(map[string]bool)
-	bannedHWIDSet := make(map[string]bool)
+	// bannedHWIDSet := make(map[string]bool) // disabled: hash collisions
 	bannedEaPidSet := make(map[string]bool)
+	bannedEntidSet := make(map[string]bool)
 
-	rows, err := s.db.Query("SELECT ea_pid, account_id, hwid FROM global_bans")
+	rows, err := s.db.Query("SELECT ea_pid, account_id, hwid, entid_gw1, entid_gw2, entid_bfn FROM global_bans")
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
-			var pid, accId, hwid string
-			rows.Scan(&pid, &accId, &hwid)
+			var pid, accId, hwid, egw1, egw2, ebfn string
+			rows.Scan(&pid, &accId, &hwid, &egw1, &egw2, &ebfn)
 			if pid != "" {
 				bannedEaPidSet[pid] = true
 			}
 			if accId != "" {
 				bannedAccountSet[accId] = true
 			}
-			if hwid != "" {
-				bannedHWIDSet[hwid] = true
+			// hwid ban enforcement disabled (hash collisions)
+			// if hwid != "" { bannedHWIDSet[hwid] = true }
+			if egw1 != "" {
+				bannedEntidSet[egw1] = true
+			}
+			if egw2 != "" {
+				bannedEntidSet[egw2] = true
+			}
+			if ebfn != "" {
+				bannedEntidSet[ebfn] = true
 			}
 		}
 	}
@@ -777,8 +821,9 @@ func (s *masterState) handleAuthBanlist(w http.ResponseWriter, r *http.Request) 
 
 	jsonResp(w, 200, map[string]any{
 		"banned_accounts": toSlice(bannedAccountSet),
-		"banned_hwids":    toSlice(bannedHWIDSet),
-		"banned_ea_pids":  toSlice(bannedEaPidSet),
+		// "banned_hwids": disabled -> hash collisions cause false positives
+		"banned_ea_pids": toSlice(bannedEaPidSet),
+		"banned_entids":  toSlice(bannedEntidSet),
 	})
 }
 
@@ -799,21 +844,18 @@ func (s *masterState) handleBanAccount(w http.ResponseWriter, r *http.Request) {
 
 	accountID := getString(data, "account_id")
 	reason := truncStr(getString(data, "reason"), 512)
-	banHWID := false
-	if v, ok := data["ban_hwid"]; ok {
-		if b, ok := v.(bool); ok {
-			banHWID = b
-		}
-	}
+	// banHWID disabled (hash collisions)
+	// banHWID := false
+	// if v, ok := data["ban_hwid"]; ok { if b, ok := v.(bool); ok { banHWID = b } }
 
 	if accountID == "" {
 		errResp(w, 400, "account_id required")
 		return
 	}
 
-	// verify account exists
-	var hwidHash string
-	err = s.db.QueryRow("SELECT hwid_hash FROM accounts WHERE account_id = ?", accountID).Scan(&hwidHash)
+	// verify account exists and snapshot entids
+	var baGW1, baGW2, baBFN string
+	err = s.db.QueryRow("SELECT entid_gw1, entid_gw2, entid_bfn FROM accounts WHERE account_id = ?", accountID).Scan(&baGW1, &baGW2, &baBFN)
 	if err != nil {
 		errResp(w, 404, "Account not found")
 		return
@@ -821,18 +863,16 @@ func (s *masterState) handleBanAccount(w http.ResponseWriter, r *http.Request) {
 
 	now := float64(time.Now().Unix())
 
-	hwid := ""
-	if banHWID {
-		hwid = hwidHash
-	}
+	// hwid ban disabled (hash collisions) -> always store empty hwid in ban record
+	// if banHWID { hwid = hwidHash }
 
 	s.db.Exec(
-		"INSERT INTO global_bans (ea_pid, account_id, hwid, components, reason, banned_by, created_at) VALUES ('', ?, ?, '[]', ?, ?, ?)",
-		accountID, hwid, reason, modUsername, now,
+		"INSERT INTO global_bans (ea_pid, account_id, hwid, components, reason, banned_by, created_at, entid_gw1, entid_gw2, entid_bfn) VALUES ('', ?, '', '[]', ?, ?, ?, ?, ?, ?)",
+		accountID, reason, modUsername, now, baGW1, baGW2, baBFN,
 	)
 
-	auditLog(s.db, "account_ban", modUsername, fmt.Sprintf("id=%s reason=%s hwid_ban=%v", accountID, reason, banHWID), ip)
-	log.Printf("[mod] %s banned account %s (hwid_ban=%v)", modUsername, accountID, banHWID)
+	auditLog(s.db, "account_ban", modUsername, fmt.Sprintf("id=%s reason=%s", accountID, reason), ip)
+	log.Printf("[mod] %s banned account %s", modUsername, accountID)
 	jsonResp(w, 200, map[string]any{"ok": true})
 }
 
@@ -852,12 +892,8 @@ func (s *masterState) handleUnbanAccount(w http.ResponseWriter, r *http.Request)
 	}
 
 	accountID := getString(data, "account_id")
-	unbanHWID := false
-	if v, ok := data["unban_hwid"]; ok {
-		if b, ok := v.(bool); ok {
-			unbanHWID = b
-		}
-	}
+	// unbanHWID disabled (hash collisions)
+	// if v, ok := data["unban_hwid"]; ok { ... }
 
 	if accountID == "" {
 		errResp(w, 400, "account_id required")
@@ -866,14 +902,7 @@ func (s *masterState) handleUnbanAccount(w http.ResponseWriter, r *http.Request)
 
 	s.db.Exec("DELETE FROM global_bans WHERE account_id = ?", accountID)
 
-	if unbanHWID {
-		var hwidHash string
-		if s.db.QueryRow("SELECT hwid_hash FROM accounts WHERE account_id = ?", accountID).Scan(&hwidHash) == nil {
-			s.db.Exec("DELETE FROM global_bans WHERE hwid = ? AND account_id = ''", hwidHash)
-		}
-	}
-
-	auditLog(s.db, "account_unban", modUsername, fmt.Sprintf("id=%s hwid_unban=%v", accountID, unbanHWID), ip)
+	auditLog(s.db, "account_unban", modUsername, fmt.Sprintf("id=%s", accountID), ip)
 	jsonResp(w, 200, map[string]any{"ok": true})
 }
 
@@ -931,6 +960,7 @@ func (s *masterState) handleSetNickname(w http.ResponseWriter, r *http.Request) 
 	if nickname == "" {
 		s.db.Exec("UPDATE accounts SET nickname = '' WHERE account_id = ?", claims.Sub)
 		// reissue jwt without nickname
+		entids := s.loadEntids(claims.Sub)
 		newClaims := JWTClaims{
 			Sub:           claims.Sub,
 			Username:      claims.Username,
@@ -938,6 +968,9 @@ func (s *masterState) handleSetNickname(w http.ResponseWriter, r *http.Request) 
 			PKFingerprint: claims.PKFingerprint,
 			EAPID:         claims.EAPID,
 			EAName:        claims.EAName,
+			EntidGW1:      entids[0],
+			EntidGW2:      entids[1],
+			EntidBFN:      entids[2],
 			Iat:           time.Now().Unix(),
 			Exp:           time.Now().Add(jwtExpiry).Unix(),
 		}
@@ -977,6 +1010,7 @@ func (s *masterState) handleSetNickname(w http.ResponseWriter, r *http.Request) 
 	s.db.Exec("INSERT INTO nickname_history (account_id, nickname, set_at) VALUES (?, ?, ?)", claims.Sub, nickname, float64(time.Now().Unix()))
 
 	// reissue jwt with nickname
+	entids2 := s.loadEntids(claims.Sub)
 	newClaims := JWTClaims{
 		Sub:           claims.Sub,
 		Username:      claims.Username,
@@ -984,6 +1018,9 @@ func (s *masterState) handleSetNickname(w http.ResponseWriter, r *http.Request) 
 		PKFingerprint: claims.PKFingerprint,
 		EAPID:         claims.EAPID,
 		EAName:        claims.EAName,
+		EntidGW1:      entids2[0],
+		EntidGW2:      entids2[1],
+		EntidBFN:      entids2[2],
 		Iat:           time.Now().Unix(),
 		Exp:           time.Now().Add(jwtExpiry).Unix(),
 	}
@@ -992,4 +1029,135 @@ func (s *masterState) handleSetNickname(w http.ResponseWriter, r *http.Request) 
 	log.Printf("[identity] %s set nickname to %q", claims.Username, nickname)
 	auditLog(s.db, "nickname_set", claims.Username, fmt.Sprintf("id=%s nickname=%s", claims.Sub, nickname), getRealIP(r, s.behindProxy))
 	jsonResp(w, 200, map[string]any{"ok": true, "jwt": jwt, "nickname": nickname})
+}
+
+// POST /auth/relink-ea, one-time re-link to a different EA account (requires identity proof + new EA token)
+func (s *masterState) handleRelinkEA(w http.ResponseWriter, r *http.Request) {
+	ip := getRealIP(r, s.behindProxy)
+	if !s.rl.check(ip, "relink_ea", 3, time.Hour) {
+		errResp(w, 429, "Rate limited")
+		return
+	}
+
+	oldPID, _, ok := s.validatePlayerSession(r)
+	if !ok {
+		errResp(w, 401, "Not authenticated")
+		return
+	}
+
+	data, err := readJSON(r, maxBodySize)
+	if err != nil {
+		errResp(w, 400, "Invalid JSON")
+		return
+	}
+
+	jwtToken := getString(data, "jwt")
+	challengeSig := getString(data, "challenge_sig")
+	newEAToken := getString(data, "ea_token")
+
+	if jwtToken == "" || challengeSig == "" || newEAToken == "" {
+		errResp(w, 400, "jwt, challenge_sig, ea_token required")
+		return
+	}
+
+	// find account currently linked to old ea_pid
+	var accountID, username, nickname, pubKeyHex string
+	var eaRelinked int
+	err = s.db.QueryRow("SELECT account_id, username, nickname, public_key, ea_relinked FROM accounts WHERE ea_pid = ?", oldPID).Scan(&accountID, &username, &nickname, &pubKeyHex, &eaRelinked)
+	if err != nil {
+		errResp(w, 404, "Account not found")
+		return
+	}
+
+	if eaRelinked != 0 {
+		errResp(w, 403, "EA account already relinked once - cannot relink again")
+		return
+	}
+
+	// verify challenge sig proves ownership of identity private key
+	userPubBytes, _ := hex.DecodeString(pubKeyHex)
+	userPub := ed25519.PublicKey(userPubBytes)
+	challenge := sha256.Sum256([]byte(jwtToken))
+	sigBytes, err := hex.DecodeString(challengeSig)
+	if err != nil || !ed25519.Verify(userPub, challenge[:], sigBytes) {
+		errResp(w, 401, "Challenge signature invalid")
+		return
+	}
+
+	// validate the new EA token
+	tokenInfo, err := ea.FetchTokenInfo(newEAToken)
+	if err != nil {
+		errResp(w, 401, fmt.Sprintf("New EA token invalid: %v", err))
+		return
+	}
+	newPID := tokenInfo.PIDId
+
+	newDisplayName := ""
+	if jwtClaims, jerr := ea.ParseClaimsUnsafe(newEAToken); jerr == nil {
+		if jwtClaims.Nexus.UserInfo.Status != "ACTIVE" {
+			errResp(w, 403, "New EA account is not active")
+			return
+		}
+		newDisplayName = jwtClaims.DisplayName()
+	}
+
+	// new ea account must own at least one PvZ shooter
+	entids, err := ea.FetchGameEntitlements(newEAToken)
+	if err != nil {
+		errResp(w, 502, fmt.Sprintf("Failed to verify game ownership: %v", err))
+		return
+	}
+	if len(entids) == 0 {
+		errResp(w, 403, "New EA account does not own any PvZ shooter game")
+		return
+	}
+
+	// new pid must not already be linked to a different account
+	var conflictAccount string
+	err = s.db.QueryRow("SELECT account_id FROM accounts WHERE ea_pid = ? AND account_id != ?", newPID, accountID).Scan(&conflictAccount)
+	if err == nil {
+		errResp(w, 409, "New EA account is already linked to another Cypress account")
+		return
+	}
+
+	gw1 := entids["PVZGWPC"]
+	gw2 := entids["PVZGW2PC"]
+	bfn := entids["PVZGW3PC"]
+
+	s.db.Exec(
+		`UPDATE accounts SET
+			ea_pid = ?, ea_name = ?, ea_relinked = 1,
+			entid_gw1 = CASE WHEN ? != '' THEN ? ELSE entid_gw1 END,
+			entid_gw2 = CASE WHEN ? != '' THEN ? ELSE entid_gw2 END,
+			entid_bfn  = CASE WHEN ? != '' THEN ? ELSE entid_bfn  END
+		WHERE account_id = ?`,
+		newPID, newDisplayName, gw1, gw1, gw2, gw2, bfn, bfn, accountID,
+	)
+
+	// issue fresh JWT with new ea info
+	entidsNew := s.loadEntids(accountID)
+	pubKey := ed25519.PublicKey(userPubBytes)
+	claims := JWTClaims{
+		Sub:           accountID,
+		Username:      username,
+		Nickname:      nickname,
+		PKFingerprint: pkFingerprint(pubKey),
+		EAPID:         newPID,
+		EAName:        newDisplayName,
+		EntidGW1:      entidsNew[0],
+		EntidGW2:      entidsNew[1],
+		EntidBFN:      entidsNew[2],
+		Iat:           time.Now().Unix(),
+		Exp:           time.Now().Add(jwtExpiry).Unix(),
+	}
+	jwt := issueJWT(s.signingKey, claims)
+
+	auditLog(s.db, "ea_relink", username, fmt.Sprintf("id=%s old_pid=%s new_pid=%s", accountID, oldPID, newPID), ip)
+	log.Printf("[identity] ea relink: %s (%s) old_pid=%s new_pid=%s", username, accountID, oldPID, newPID)
+
+	jsonResp(w, 200, map[string]any{
+		"ok":     true,
+		"jwt":    jwt,
+		"eaName": newDisplayName,
+	})
 }

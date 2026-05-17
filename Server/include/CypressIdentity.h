@@ -142,6 +142,9 @@ namespace Cypress
 			std::string pk_fingerprint; // sha256 of public key (first 16 bytes, hex)
 			std::string ea_pid;         // ea persona id
 			std::string ea_name;        // ea display name
+			std::string entid_gw1;      // GW1 ONLINE_ACCESS entitlement id
+			std::string entid_gw2;      // GW2 ONLINE_ACCESS entitlement id
+			std::string entid_bfn;      // BFN ONLINE_ACCESS entitlement id
 			int64_t iat = 0;
 			int64_t exp = 0;
 		};
@@ -204,6 +207,9 @@ namespace Cypress
 				claims.pk_fingerprint = j.value("pk_fp", "").substr(0, 64);
 				claims.ea_pid = j.value("ea_pid", "").substr(0, 64);
 				claims.ea_name = j.value("ea_name", "").substr(0, 64);
+				claims.entid_gw1 = j.value("entid_gw1", "").substr(0, 32);
+				claims.entid_gw2 = j.value("entid_gw2", "").substr(0, 32);
+				claims.entid_bfn = j.value("entid_bfn", "").substr(0, 32);
 				claims.iat = j.value("iat", (int64_t)0);
 				claims.exp = j.value("exp", (int64_t)0);
 
@@ -240,8 +246,9 @@ namespace Cypress
 		struct BanList
 		{
 			std::vector<std::string> banned_accounts;
-			std::vector<std::string> banned_hwids;
+			// std::vector<std::string> banned_hwids; disabled: hash collisions cause false positives
 			std::vector<std::string> banned_ea_pids;
+			std::vector<std::string> banned_entids;
 
 			bool is_account_banned(const std::string& account_id) const
 			{
@@ -250,17 +257,19 @@ namespace Cypress
 				return false;
 			}
 
-			bool is_hwid_banned(const std::string& hwid_hash) const
-			{
-				for (const auto& h : banned_hwids)
-					if (h == hwid_hash) return true;
-				return false;
-			}
+			// bool is_hwid_banned(const std::string& hwid_hash) const { ... } disabled: hash collisions
 
 			bool is_ea_pid_banned(const std::string& ea_pid) const
 			{
 				for (const auto& p : banned_ea_pids)
 					if (p == ea_pid) return true;
+				return false;
+			}
+
+			bool is_entid_banned(const std::string& entid) const
+			{
+				for (const auto& e : banned_entids)
+					if (e == entid) return true;
 				return false;
 			}
 		};
@@ -274,12 +283,13 @@ namespace Cypress
 				if (j.contains("banned_accounts") && j["banned_accounts"].is_array())
 					for (const auto& v : j["banned_accounts"])
 						bl.banned_accounts.push_back(v.get<std::string>());
-				if (j.contains("banned_hwids") && j["banned_hwids"].is_array())
-					for (const auto& v : j["banned_hwids"])
-						bl.banned_hwids.push_back(v.get<std::string>());
+				// if (j.contains("banned_hwids") ...) disabled: hash collisions
 				if (j.contains("banned_ea_pids") && j["banned_ea_pids"].is_array())
 					for (const auto& v : j["banned_ea_pids"])
 						bl.banned_ea_pids.push_back(v.get<std::string>());
+				if (j.contains("banned_entids") && j["banned_entids"].is_array())
+					for (const auto& v : j["banned_entids"])
+						bl.banned_entids.push_back(v.get<std::string>());
 			}
 			catch (...) {}
 			return bl;

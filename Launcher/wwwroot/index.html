@@ -37,17 +37,42 @@
         </div>
     </div>
 
-    <!-- cypress identity registration modal -->
     <div class="auth-modal-backdrop" id="identityModalBackdrop" style="display:none;">
         <div class="auth-modal" onclick="event.stopPropagation()">
-            <h3>Choose a Username</h3>
-            <p>Pick a unique username for your Cypress identity. This is how other players will know you.</p>
-            <div class="identity-form">
-                <input type="text" id="identityUsernameInput" class="identity-input" placeholder="username" maxlength="32" autocomplete="off" spellcheck="false" onkeydown="if(event.key==='Enter')submitIdentityRegistration()">
-                <span class="identity-hint">3-16 characters, letters, numbers, _ and -</span>
+            <div id="identityConfirmStep">
+                <h3>Confirm EA Account</h3>
+                <p>You are registering with this EA account:</p>
+                <p style="font-weight:bold;font-size:1.05em;" id="identityConfirmEaName"></p>
+                <p style="margin-top:0.5em;">Owned PvZ games:</p>
+                <ul id="identityConfirmGamesList" style="margin:0.3em 0 1em 1.2em;padding:0;color:var(--text-secondary);font-size:0.9em;"></ul>
+                <div class="auth-status" id="identityConfirmStatus"></div>
+                <button class="auth-login-btn" id="identityConfirmBtn" onclick="proceedToUsernameStep()">Looks good, continue</button>
             </div>
-            <button class="auth-login-btn" id="identityRegisterBtn" onclick="submitIdentityRegistration()">Register</button>
-            <div class="auth-status" id="identityRegStatus"></div>
+            <div id="identityUsernameStep" style="display:none;">
+                <h3>Choose a Username</h3>
+                <p>Pick a unique username for your Cypress identity. This is how other players will know you.</p>
+                <div class="identity-form">
+                    <input type="text" id="identityUsernameInput" class="identity-input" placeholder="username" maxlength="32" autocomplete="off" spellcheck="false" onkeydown="if(event.key==='Enter')submitIdentityRegistration()">
+                    <span class="identity-hint">3-32 characters, letters, numbers, _ and -</span>
+                </div>
+                <button class="auth-login-btn" id="identityRegisterBtn" onclick="submitIdentityRegistration()">Register</button>
+                <div class="auth-status" id="identityRegStatus"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="auth-modal-backdrop" id="relinkModalBackdrop" style="display:none;">
+        <div class="auth-modal" onclick="event.stopPropagation()">
+            <button class="auth-modal-close" onclick="closeRelinkModal()" title="Cancel">✕</button>
+            <h3>Relink EA Account</h3>
+            <p style="color:var(--text-secondary);font-size:0.9em;margin-bottom:0.8em;">
+                <strong>This is a one-time operation.</strong> Once you relink, you cannot do it again.
+            </p>
+            <p style="color:var(--text-secondary);font-size:0.9em;margin-bottom:1em;">
+                Make sure you are signing into the <strong>correct EA account</strong>, and that it owns at least one PvZ shooter (Garden Warfare 1, Garden Warfare 2, or Battle for Neighborville).
+            </p>
+            <div class="auth-status" id="relinkStatus"></div>
+            <button class="auth-login-btn" id="relinkConfirmBtn" onclick="startRelinkEALogin()">Sign in with new EA account</button>
         </div>
     </div>
 
@@ -186,6 +211,14 @@
                 </div>
                 <span class="field-hint" id="nicknameStatus">optional display name shown to other players</span>
             </div>
+            <div class="form-group" id="refreshLicensesGroup" style="display:none;">
+                <button class="btn btn-small" id="refreshLicensesBtn" onclick="submitRefreshEntitlements()">Refresh Licenses</button>
+                <span class="field-hint" id="refreshLicensesHint">re-fetches your owned PvZ games from EA</span>
+            </div>
+            <div class="form-group" id="relinkEaGroup" style="display:none;">
+                <button class="btn btn-small btn-muted" id="relinkEaBtn" onclick="showRelinkModal()">Relink EA Account</button>
+                <span class="field-hint">link a different EA account (one-time only)</span>
+            </div>
             <div class="form-group">
                 <button class="btn btn-small btn-muted" onclick="clearIdentity()">Re-login</button>
                 <span class="field-hint">clears saved identity and re-registers with your EA account</span>
@@ -301,9 +334,15 @@
                         <div id="joinRelayResolved" class="relay-resolved-info" style="display:none;"></div>
                         <input type="hidden" id="joinRelayPreset" value="custom">
                         <input type="hidden" id="joinRelayKey">
-                        <input type="hidden" id="joinRelayAddress" value="relay.v0e.dev:25200">
+                        <input type="hidden" id="joinRelayAddress" value="">
                         <details class="relay-advanced">
                             <summary>Advanced</summary>
+                            <label class="field-label">Relay Region</label>
+                            <div class="segmented-control" id="joinRelayRegionControl">
+                                <button type="button" class="segmented-btn active" data-region="na" onclick="onJoinRelayRegionChanged('na')">NA</button>
+                                <button type="button" class="segmented-btn" data-region="eu" onclick="onJoinRelayRegionChanged('eu')">EU</button>
+                            </div>
+                            <span class="field-hint" style="margin-bottom:0.6em;display:block;">Pick the same region as the host. Defaults to NA.</span>
                             <label class="field-label" for="joinRelayAddressManual">Relay Host (override)</label>
                             <input type="text" id="joinRelayAddressManual" class="text-input" placeholder="relay.your-vps.example:25200">
                             <span class="field-hint" id="joinRelayHint">Only needed if the host runs a custom relay server.</span>
@@ -497,12 +536,13 @@
                             <span class="field-note" id="deviceIPDetectedNote" style="display:none;"></span>
                         </div>
                         <div class="form-group full-width">
-                            <label class="toggle-row">
-                                <input type="checkbox" id="hostUseEuRelay" class="toggle-input" onchange="onEuRelayToggled()">
-                                <span class="toggle-slider"></span>
-                                <span><svg width="14" height="10" viewBox="0 0 14 10" style="vertical-align:-1px;margin-right:3px;"><defs><clipPath id="flagClip"><rect width="14" height="10" rx="2"/></clipPath></defs><g clip-path="url(#flagClip)"><rect width="14" height="10" fill="#000"/><rect y="3.33" width="14" height="3.34" fill="#D00"/><rect y="6.67" width="14" height="3.33" fill="#FC0"/></g></svg>Use EU Relay</span>
-                            </label>
-                            <span class="field-hint">Tunnels traffic through the public EU relay so you don't need to port-forward. A fresh relay lease is generated automatically when you start the server.</span>
+                            <label class="field-label">Relay</label>
+                            <div class="segmented-control" id="hostRelayRegionControl">
+                                <button type="button" class="segmented-btn active" data-region="off" onclick="onRelayRegionChanged('off')">Off</button>
+                                <button type="button" class="segmented-btn" data-region="na" onclick="onRelayRegionChanged('na')">NA</button>
+                                <button type="button" class="segmented-btn" data-region="eu" onclick="onRelayRegionChanged('eu')">EU</button>
+                            </div>
+                            <span class="field-hint">Tunnels traffic through the selected relay so you don't need to port-forward. A relay lease is generated automatically when you start the server.</span>
                             <input type="hidden" id="hostRelayMode" value="Direct">
                             <input type="hidden" id="hostRelayPreset" value="custom">
                             <input type="hidden" id="hostRelayAddress" value="">

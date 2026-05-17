@@ -372,7 +372,10 @@ func initDB(path string) (*sql.DB, error) {
 		components TEXT NOT NULL DEFAULT '[]',
 		reason TEXT NOT NULL DEFAULT '',
 		banned_by TEXT NOT NULL,
-		created_at REAL NOT NULL
+		created_at REAL NOT NULL,
+		entid_gw1 TEXT NOT NULL DEFAULT '',
+		entid_gw2 TEXT NOT NULL DEFAULT '',
+		entid_bfn TEXT NOT NULL DEFAULT ''
 	);
 	CREATE TABLE IF NOT EXISTS banned_servers (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -409,6 +412,9 @@ func initDB(path string) (*sql.DB, error) {
 	// migrations for existing dbs
 	db.Exec("ALTER TABLE global_bans ADD COLUMN ea_pid TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE global_bans ADD COLUMN account_id TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE global_bans ADD COLUMN entid_gw1 TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE global_bans ADD COLUMN entid_gw2 TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE global_bans ADD COLUMN entid_bfn TEXT NOT NULL DEFAULT ''")
 
 	// indexes (safe now that columns exist)
 	db.Exec("CREATE INDEX IF NOT EXISTS idx_global_bans_ea_pid ON global_bans(ea_pid)")
@@ -951,10 +957,18 @@ func (s *masterState) handleGlobalBan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// snapshot entids from accounts table
+	var gbanGW1, gbanGW2, gbanBFN string
+	if accountId != "" {
+		s.db.QueryRow("SELECT entid_gw1, entid_gw2, entid_bfn FROM accounts WHERE account_id = ?", accountId).Scan(&gbanGW1, &gbanGW2, &gbanBFN)
+	} else if eaPid != "" {
+		s.db.QueryRow("SELECT entid_gw1, entid_gw2, entid_bfn FROM accounts WHERE ea_pid = ?", eaPid).Scan(&gbanGW1, &gbanGW2, &gbanBFN)
+	}
+
 	compsJSON, _ := json.Marshal(components)
 	now := float64(time.Now().Unix())
-	s.db.Exec("INSERT INTO global_bans (ea_pid, account_id, hwid, components, reason, banned_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		eaPid, accountId, hwid, string(compsJSON), reason, username, now)
+	s.db.Exec("INSERT INTO global_bans (ea_pid, account_id, hwid, components, reason, banned_by, created_at, entid_gw1, entid_gw2, entid_bfn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		eaPid, accountId, hwid, string(compsJSON), reason, username, now, gbanGW1, gbanGW2, gbanBFN)
 
 	// also flag in players table so EA auth login rejects them
 	if eaPid != "" {
@@ -1024,14 +1038,14 @@ func (s *masterState) handleBanByPid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// look up account_id and hwid_hash from accounts table via ea_pid
-	var accountId, hwidHash string
-	s.db.QueryRow("SELECT account_id, hwid_hash FROM accounts WHERE ea_pid = ?", pid).Scan(&accountId, &hwidHash)
+	// look up account_id, hwid_hash, and entids from accounts table via ea_pid
+	var accountId, hwidHash, pidGW1, pidGW2, pidBFN string
+	s.db.QueryRow("SELECT account_id, hwid_hash, entid_gw1, entid_gw2, entid_bfn FROM accounts WHERE ea_pid = ?", pid).Scan(&accountId, &hwidHash, &pidGW1, &pidGW2, &pidBFN)
 
 	now := float64(time.Now().Unix())
 
-	s.db.Exec("INSERT INTO global_bans (ea_pid, account_id, hwid, components, reason, banned_by, created_at) VALUES (?, ?, ?, '[]', ?, ?, ?)",
-		pid, accountId, hwidHash, reason, username, now)
+	s.db.Exec("INSERT INTO global_bans (ea_pid, account_id, hwid, components, reason, banned_by, created_at, entid_gw1, entid_gw2, entid_bfn) VALUES (?, ?, ?, '[]', ?, ?, ?, ?, ?, ?)",
+		pid, accountId, hwidHash, reason, username, now, pidGW1, pidGW2, pidBFN)
 
 	// also flag in players table so EA auth rejects them
 	s.db.Exec("UPDATE players SET banned = 1, ban_reason = ?, banned_by = ? WHERE pid = ?", reason, username, pid)
@@ -1125,13 +1139,9 @@ func (s *masterState) handleBanCheck(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// check direct hwid match
-	var reason string
-	err = s.db.QueryRow("SELECT reason FROM global_bans WHERE hwid = ?", hwid).Scan(&reason)
-	if err == nil {
-		jsonResp(w, 200, map[string]any{"banned": true, "reason": reason})
-		return
-	}
+	// hwid direct match disabled (hash collisions)
+	// err = s.db.QueryRow("SELECT reason FROM global_bans WHERE hwid = ?", hwid).Scan(&reason)
+	// if err == nil { jsonResp(w, 200, map[string]any{"banned": true, "reason": reason}); return }
 
 	// check component overlap
 	if len(components) > 0 {
@@ -1551,6 +1561,8 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/auth/set-nickname", methodRouter(nil, state.handleSetNickname))
 	mux.HandleFunc("/auth/pubkey", methodRouter(state.handleAuthPubkey, nil))
 	mux.HandleFunc("/auth/banlist", methodRouter(state.handleAuthBanlist, nil))
+	mux.HandleFunc("/auth/refresh-entitlements", methodRouter(nil, state.handleRefreshEntitlements))
+	mux.HandleFunc("/auth/relink-ea", methodRouter(nil, state.handleRelinkEA))
 	mux.HandleFunc("/mod/ban-account", methodRouter(nil, state.handleBanAccount))
 	mux.HandleFunc("/mod/unban-account", methodRouter(nil, state.handleUnbanAccount))
 

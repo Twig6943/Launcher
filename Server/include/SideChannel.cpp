@@ -406,6 +406,29 @@ namespace Cypress
 			m_banList = std::move(bl);
 		}
 		CYPRESS_LOGMESSAGE(LogLevel::Debug, "SideChannel: Updated ban list");
+
+		// kick any connected peers that are now banned
+		std::vector<SOCKET> toKick;
+		{
+			std::lock_guard<std::recursive_mutex> plock(m_peersMutex);
+			std::lock_guard<std::mutex> block(m_banListMutex);
+			for (auto& [sock, peer] : m_peers)
+			{
+				if (!peer.authenticated) continue;
+				bool banned = (!peer.accountId.empty() && m_banList.is_account_banned(peer.accountId))
+					|| (!peer.eaPid.empty() && m_banList.is_ea_pid_banned(peer.eaPid))
+					|| (!peer.entid.empty() && m_banList.is_entid_banned(peer.entid));
+					// || (!peer.hwid.empty() && m_banList.is_hwid_banned(peer.hwid)); disabled: hash collisions
+				if (banned)
+				{
+					CYPRESS_LOGMESSAGE(LogLevel::Warning, "SideChannel: Kicking banned peer {}", peer.name);
+					SendToPeer(peer, { {"type", "authResult"}, {"ok", false}, {"msg", "account banned"} });
+					toKick.push_back(sock);
+				}
+			}
+		}
+		for (SOCKET s : toKick)
+			closesocket(s);
 	}
 
 	void SideChannelServer::AcceptLoop()
@@ -762,7 +785,28 @@ namespace Cypress
 					peer.identityNickname = claims.nickname;
 					peer.eaPid = claims.ea_pid;
 
-					// check account ban before issuing challenge
+					// pick entid for the game this server is running
+					{
+						const char* gameName = CYPRESS_GAME_NAME;
+						if (strcmp(gameName, "GW1") == 0)
+							peer.entid = claims.entid_gw1;
+						else if (strcmp(gameName, "GW2") == 0)
+							peer.entid = claims.entid_gw2;
+						else if (strcmp(gameName, "BFN") == 0)
+							peer.entid = claims.entid_bfn;
+					}
+
+					// reject if they don't own this game
+					if (peer.entid.empty())
+					{
+						CYPRESS_LOGMESSAGE(LogLevel::Warning, "SideChannel: Rejecting {} - no entitlement for this game", peer.name);
+						SendToPeer(peer, { {"type", "authResult"}, {"ok", false}, {"msg", "you do not own this game"} });
+						peer.authenticated = false;
+						if (m_onAuthReject && !peer.name.empty()) m_onAuthReject(peer.name, "Game not owned");
+						return;
+					}
+
+					// check bans before issuing challenge
 					{
 						std::lock_guard<std::mutex> lock(m_banListMutex);
 						if (m_banList.is_account_banned(claims.sub))
@@ -779,6 +823,14 @@ namespace Cypress
 							SendToPeer(peer, { {"type", "authResult"}, {"ok", false}, {"msg", "account banned"} });
 							peer.authenticated = false;
 							if (m_onAuthReject && !peer.name.empty()) m_onAuthReject(peer.name, "EA account banned");
+							return;
+						}
+						if (!peer.entid.empty() && m_banList.is_entid_banned(peer.entid))
+						{
+							CYPRESS_LOGMESSAGE(LogLevel::Warning, "SideChannel: Rejecting {} - entitlement banned", peer.name);
+							SendToPeer(peer, { {"type", "authResult"}, {"ok", false}, {"msg", "account banned"} });
+							peer.authenticated = false;
+							if (m_onAuthReject && !peer.name.empty()) m_onAuthReject(peer.name, "Account banned");
 							return;
 						}
 					}

@@ -1,3 +1,17 @@
+var RELAY_SERVERS = {
+    na: 'na-relay.v0e.dev:25200',
+    eu: 'eu-relay.v0e.dev:25200'
+};
+
+function applyRelayServersConfig(servers) {
+    if (!servers) return;
+    if (servers.na) RELAY_SERVERS.na = servers.na;
+    if (servers.eu) RELAY_SERVERS.eu = servers.eu;
+}
+
+var _hostRelayRegion = 'off';
+var _joinRelayRegion = 'na';
+
 function relayId(prefix, suffix) {
     return prefix + suffix.charAt(0).toUpperCase() + suffix.slice(1);
 }
@@ -69,22 +83,69 @@ function syncRelayUi(prefix) {
 
 function updateDetectedDeviceIpNote() {
     const note = document.getElementById('deviceIPDetectedNote');
-    if (!note) {
-        return;
-    }
-
+    if (!note) return;
     if (!detectedDeviceIP) {
         note.style.display = 'none';
         note.textContent = '';
         return;
     }
-
     note.style.display = '';
     note.textContent = 'Detected on this PC: ' + detectedDeviceIP;
 }
 
+// host relay region selector
+
+function onRelayRegionChanged(region) {
+    _hostRelayRegion = region;
+
+    var ctrl = document.getElementById('hostRelayRegionControl');
+    if (ctrl) {
+        ctrl.querySelectorAll('.segmented-btn').forEach(function(btn) {
+            btn.classList.toggle('active', btn.dataset.region === region);
+        });
+    }
+
+    if (region === 'off') {
+        document.getElementById('hostRelayMode').value = 'Direct';
+        document.getElementById('hostRelayAddress').value = '';
+        document.getElementById('hostRelayKey').value = '';
+        document.getElementById('hostRelayCode').value = '';
+        var codeDisplay = document.getElementById('hostRelayCodeDisplay');
+        if (codeDisplay) codeDisplay.style.display = 'none';
+    } else {
+        document.getElementById('hostRelayMode').value = 'Relay';
+        document.getElementById('hostRelayAddress').value = RELAY_SERVERS[region] || '';
+    }
+}
+
+// join relay region selector
+
+function onJoinRelayRegionChanged(region) {
+    _joinRelayRegion = region;
+
+    var ctrl = document.getElementById('joinRelayRegionControl');
+    if (ctrl) {
+        ctrl.querySelectorAll('.segmented-btn').forEach(function(btn) {
+            btn.classList.toggle('active', btn.dataset.region === region);
+        });
+    }
+
+    // only update hidden address if not overridden manually
+    var manual = (document.getElementById('joinRelayAddressManual') || {}).value || '';
+    if (!manual) {
+        document.getElementById('joinRelayAddress').value = RELAY_SERVERS[region] || '';
+    }
+}
+
+function getJoinRelayAddress() {
+    var manual = (document.getElementById('joinRelayAddressManual') || {}).value || '';
+    if (manual) return manual;
+    var hidden = (document.getElementById('joinRelayAddress') || {}).value || '';
+    if (hidden) return hidden;
+    return RELAY_SERVERS[_joinRelayRegion] || RELAY_SERVERS.na;
+}
+
 function parseRelayLink(prefix) {
-    // legacy compat, still try to parse cypress:// links if pasted into the code field
     const codeInput = document.getElementById('joinRelayCode');
     if (!codeInput) return;
     const raw = codeInput.value.trim();
@@ -106,21 +167,15 @@ function resolveRelayCode() {
     const codeInput = document.getElementById('joinRelayCode');
     const code = (codeInput ? codeInput.value : '').trim().toUpperCase();
     if (!code) { showStatus('Enter a relay code first.', 'error'); return; }
-    // if it looks like a cypress:// link, parse it instead
     if (code.startsWith('CYPRESS://') || code.startsWith('HTTP')) {
         codeInput.value = code;
         parseRelayLink('join');
         return;
     }
-    // use manual override, then hidden joinRelayAddress (defaults to v0e), then host relay address
-    var relayAddr = (document.getElementById('joinRelayAddressManual') || {}).value || '';
-    if (!relayAddr) relayAddr = (document.getElementById('joinRelayAddress') || {}).value || '';
-    if (!relayAddr) relayAddr = (document.getElementById('hostRelayAddress') || {}).value || '';
-    if (!relayAddr) relayAddr = 'relay.v0e.dev:25200';
+    var relayAddr = getJoinRelayAddress();
     send('resolveRelayCode', { relayAddress: relayAddr, code: code });
 }
 
-// auto-resolve when code reaches 6 alphanumeric chars
 var _autoResolveTimer = null;
 function autoResolveRelayCode() {
     if (_autoResolveTimer) clearTimeout(_autoResolveTimer);
@@ -139,7 +194,6 @@ function onRelayResolved(data) {
         showStatus(data.error, 'error');
         return;
     }
-    // fill hidden fields for join
     document.getElementById('joinRelayAddress').value = data.relayAddress || '';
     document.getElementById('joinRelayKey').value = data.relayKey || '';
     if (hintEl) hintEl.textContent = 'Code verified!';
@@ -157,29 +211,6 @@ function copyRelayCode() {
     });
 }
 
-function useV0eRelay() {
-    document.getElementById('hostRelayAddress').value = 'relay.v0e.dev:25200';
-    syncRelayUi('host');
-}
-
-// eu relay toggle
-function onEuRelayToggled() {
-    var on = document.getElementById('hostUseEuRelay').checked;
-    document.getElementById('hostRelayMode').value = on ? 'Relay' : 'Direct';
-    document.getElementById('hostRelayAddress').value = on ? 'relay.v0e.dev:25200' : '';
-    // clear stale lease when toggling off
-    if (!on) {
-        document.getElementById('hostRelayKey').value = '';
-        document.getElementById('hostRelayCode').value = '';
-        var codeDisplay = document.getElementById('hostRelayCodeDisplay');
-        if (codeDisplay) codeDisplay.style.display = 'none';
-    }
-}
-
-// auto-lease: startServer() calls this when EU relay is on
-// requests a fresh lease, then fires the real start on callback
-var _pendingRelayStart = false;
-
 function requestRelayLeaseAndStart() {
     _pendingRelayStart = true;
     var motd = '';
@@ -188,7 +219,8 @@ function requestRelayLeaseAndStart() {
     document.getElementById('hostRelayServerName').value = serverName;
     var addr = document.getElementById('hostRelayAddress').value;
     if (!addr) {
-        addr = 'relay.v0e.dev:25200';
+        var fallbackRegion = _hostRelayRegion !== 'off' ? _hostRelayRegion : 'na';
+        addr = RELAY_SERVERS[fallbackRegion];
         document.getElementById('hostRelayAddress').value = addr;
     }
     send('getRelayLease', {
@@ -202,7 +234,8 @@ function requestRelayLeaseAndStart() {
 function requestRelayLease() {
     var addr = document.getElementById('hostRelayAddress').value;
     if (!addr) {
-        addr = 'relay.v0e.dev:25200';
+        var fallbackRegion = _hostRelayRegion !== 'off' ? _hostRelayRegion : 'na';
+        addr = RELAY_SERVERS[fallbackRegion];
         document.getElementById('hostRelayAddress').value = addr;
     }
     send('getRelayLease', {
@@ -211,6 +244,8 @@ function requestRelayLease() {
         game: getGame()
     });
 }
+
+var _pendingRelayStart = false;
 
 function applyRelayLease(data) {
     if (data.relayAddress !== undefined) {
@@ -226,7 +261,6 @@ function applyRelayLease(data) {
         document.getElementById('hostRelayServerName').value = data.relayServerName;
     }
 
-    // show the code prominently
     if (data.hostRelayCode) {
         document.getElementById('hostRelayCode').value = data.hostRelayCode;
         var codeVal = document.getElementById('hostRelayCodeValue');
@@ -235,12 +269,10 @@ function applyRelayLease(data) {
         if (codeDisp) codeDisp.style.display = '';
     }
 
-    // auto-fill join side relay address if empty
     if (!document.getElementById('joinRelayAddress').value) {
         document.getElementById('joinRelayAddress').value = data.relayAddress || '';
     }
 
-    // if we were waiting on a lease to start, fire the real start now
     if (_pendingRelayStart) {
         _pendingRelayStart = false;
         doStartServer();

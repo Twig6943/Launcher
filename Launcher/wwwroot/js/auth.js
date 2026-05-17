@@ -1,6 +1,8 @@
 // ea auth login screen logic
 
 window._eaLoggedIn = false;
+window._identityOwnedGames = [];
+window._identityEaRelinked = false;
 
 function updateProfileIdentitySection() {
     var loggedIn = !!window._eaLoggedIn;
@@ -25,6 +27,19 @@ function updateProfileIdentitySection() {
             if (usernameHint) usernameHint.textContent = 'your display name when joining servers';
         }
     }
+}
+
+function _updateIdentityButtons() {
+    var games = window._identityOwnedGames || [];
+    var relinked = !!window._identityEaRelinked;
+
+    var refreshGroup = document.getElementById('refreshLicensesGroup');
+    var relinkGroup = document.getElementById('relinkEaGroup');
+
+    // show refresh licenses only if they dont have all 3 games
+    if (refreshGroup) refreshGroup.style.display = (games.length < 3) ? '' : 'none';
+    // show relink ea only if not already relinked
+    if (relinkGroup) relinkGroup.style.display = relinked ? 'none' : '';
 }
 
 function showAuthModal() {
@@ -90,6 +105,9 @@ function handleAuthLogoutResult(data) {
 
 function handleIdentityStatus(data) {
     if (data.registered) {
+        window._identityOwnedGames = data.ownedGames || [];
+        window._identityEaRelinked = !!data.eaRelinked;
+        _updateIdentityButtons();
         hideIdentityModal();
         const usernameField = document.getElementById('username');
         if (usernameField) usernameField.value = data.username || '';
@@ -97,22 +115,58 @@ function handleIdentityStatus(data) {
         if (nicknameField) nicknameField.value = data.nickname || '';
         if (typeof syncProfileDisplay === 'function') syncProfileDisplay();
     } else if (window._eaLoggedIn) {
-        showIdentityModal();
+        // not registered: confirmation with EA name w owned games
+        var eaName = data.eaDisplayName || '';
+        var games = data.ownedGames || [];
+        showIdentityModal(eaName, games);
     }
 }
 
-function showIdentityModal() {
+function showIdentityModal(eaDisplayName, ownedGames) {
+    // reset to step 1
+    document.getElementById('identityConfirmStep').style.display = '';
+    document.getElementById('identityUsernameStep').style.display = 'none';
+    document.getElementById('identityConfirmStatus').textContent = '';
+    document.getElementById('identityConfirmStatus').className = 'auth-status';
+    document.getElementById('identityConfirmBtn').disabled = false;
+
+    var nameEl = document.getElementById('identityConfirmEaName');
+    if (nameEl) nameEl.textContent = eaDisplayName || '(unknown)';
+
+    var listEl = document.getElementById('identityConfirmGamesList');
+    if (listEl) {
+        listEl.innerHTML = '';
+        if (ownedGames && ownedGames.length > 0) {
+            ownedGames.forEach(function(g) {
+                var li = document.createElement('li');
+                li.textContent = g;
+                listEl.appendChild(li);
+            });
+        } else {
+            var li = document.createElement('li');
+            li.textContent = 'No supported games found';
+            li.style.color = 'var(--text-muted, #999)';
+            listEl.appendChild(li);
+        }
+    }
+
     document.getElementById('identityModalBackdrop').style.display = 'flex';
-    document.getElementById('identityRegStatus').textContent = '';
-    document.getElementById('identityRegStatus').className = 'auth-status';
-    document.getElementById('identityRegisterBtn').disabled = false;
-    const input = document.getElementById('identityUsernameInput');
-    input.value = '';
-    setTimeout(function() { input.focus(); }, 100);
 }
 
 function hideIdentityModal() {
     document.getElementById('identityModalBackdrop').style.display = 'none';
+}
+
+function proceedToUsernameStep() {
+    document.getElementById('identityConfirmStep').style.display = 'none';
+    var usernameStep = document.getElementById('identityUsernameStep');
+    usernameStep.style.display = '';
+    document.getElementById('identityRegStatus').textContent = '';
+    document.getElementById('identityRegStatus').className = 'auth-status';
+    document.getElementById('identityRegisterBtn').disabled = false;
+    var input = document.getElementById('identityUsernameInput');
+    input.value = '';
+    setTimeout(function() { input.focus(); }, 100);
 }
 
 function submitIdentityRegistration() {
@@ -144,6 +198,9 @@ function handleRegisterResult(data) {
 
     if (data.ok) {
         status.textContent = '';
+        window._identityOwnedGames = data.ownedGames || [];
+        window._identityEaRelinked = false;
+        _updateIdentityButtons();
         hideIdentityModal();
         const usernameField = document.getElementById('username');
         if (usernameField) usernameField.value = data.username || '';
@@ -154,6 +211,73 @@ function handleRegisterResult(data) {
     } else {
         btn.disabled = false;
         status.textContent = data.error || 'Registration failed';
+        status.className = 'auth-status error';
+    }
+}
+
+// refresh licenses
+
+function submitRefreshEntitlements() {
+    var btn = document.getElementById('refreshLicensesBtn');
+    var hint = document.getElementById('refreshLicensesHint');
+    if (btn) btn.disabled = true;
+    if (hint) hint.textContent = 'Checking with EA...';
+    send('refreshEntitlements');
+}
+
+function handleRefreshEntitlementsResult(data) {
+    var btn = document.getElementById('refreshLicensesBtn');
+    var hint = document.getElementById('refreshLicensesHint');
+    if (data.ok) {
+        window._identityOwnedGames = data.ownedGames || [];
+        _updateIdentityButtons();
+        if (hint) hint.textContent = 'Licenses updated';
+        setTimeout(function() {
+            if (hint) hint.textContent = 're-fetches your owned PvZ games from EA';
+        }, 3000);
+    } else {
+        if (hint) hint.textContent = data.error || 'Failed to refresh';
+        setTimeout(function() {
+            if (hint) hint.textContent = 're-fetches your owned PvZ games from EA';
+        }, 4000);
+    }
+    if (btn) btn.disabled = false;
+}
+
+// relink ea account
+
+function showRelinkModal() {
+    document.getElementById('relinkStatus').textContent = '';
+    document.getElementById('relinkStatus').className = 'auth-status';
+    document.getElementById('relinkConfirmBtn').disabled = false;
+    document.getElementById('relinkModalBackdrop').style.display = 'flex';
+}
+
+function closeRelinkModal() {
+    document.getElementById('relinkModalBackdrop').style.display = 'none';
+}
+
+function startRelinkEALogin() {
+    var btn = document.getElementById('relinkConfirmBtn');
+    var status = document.getElementById('relinkStatus');
+    btn.disabled = true;
+    status.textContent = 'Opening EA sign-in window...';
+    status.className = 'auth-status waiting';
+    send('relinkEA');
+}
+
+function handleRelinkEAResult(data) {
+    var btn = document.getElementById('relinkConfirmBtn');
+    var status = document.getElementById('relinkStatus');
+    if (data.ok) {
+        window._identityEaRelinked = true;
+        window._identityOwnedGames = data.ownedGames || [];
+        _updateIdentityButtons();
+        closeRelinkModal();
+        showStatus('EA account relinked successfully', 'info');
+    } else {
+        btn.disabled = false;
+        status.textContent = data.error || 'Relink failed';
         status.className = 'auth-status error';
     }
 }

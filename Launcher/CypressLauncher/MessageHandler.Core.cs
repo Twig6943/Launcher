@@ -375,6 +375,12 @@ public partial class MessageHandler
 				case "setNickname":
 					OnSetNickname(msg);
 					break;
+				case "refreshEntitlements":
+					OnRefreshEntitlements();
+					break;
+				case "relinkEA":
+					OnRelinkEA();
+					break;
 				case "checkUpdates":
 					OnCheckUpdates();
 					break;

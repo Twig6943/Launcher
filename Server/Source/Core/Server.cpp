@@ -1293,7 +1293,7 @@ namespace Cypress
 			auto* banlist = GetServerBanlist();
 			if (!banlist->IsBanned(peer.name.c_str(), peer.hwid.c_str(), &peer.fingerprint, peer.accountId.empty() ? nullptr : peer.accountId.c_str())) return;
 
-			// they slipped past the game hook — find and kick them now
+			// if they slipped past the game hook -> find and kick them now
 			banlist->SpreadComponents(peer.fingerprint, peer.name.c_str());
 			fb::ServerGameContext* gameContext = fb::ServerGameContext::GetInstance();
 			if (!gameContext || !gameContext->m_serverPlayerManager) return;
@@ -1527,7 +1527,7 @@ namespace Cypress
 
 			CYPRESS_LOGTOSERVER(LogLevel::Info, "Moderator {} executed: {}", peer.name, cmd);
 
-			// handle GetBans directly — serialize banlist and send back to peer
+			// handle GetBans directly
 			if (cmd == "Cypress.GetBans")
 			{
 				auto& entries = g_program->GetServer()->GetServerBanlist()->GetBannedPlayers();

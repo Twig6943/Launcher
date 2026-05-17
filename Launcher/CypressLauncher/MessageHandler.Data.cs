@@ -121,6 +121,11 @@ public partial class MessageHandler
 		string detectedDeviceIp = TryGetPreferredDeviceIp();
 		if (!string.IsNullOrWhiteSpace(detectedDeviceIp))
 			response["detectedDeviceIP"] = detectedDeviceIp;
+		response["relayServers"] = new JObject
+		{
+			["na"] = LauncherConfig.RelayNA,
+			["eu"] = LauncherConfig.RelayEU
+		};
 
 		if (File.Exists(filePath))
 		{

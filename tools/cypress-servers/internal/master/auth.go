@@ -1,6 +1,7 @@
 package master
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -165,6 +166,30 @@ func (s *masterState) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[auth] db error upserting player %s: %v", pid, err)
 		errResp(w, 500, "Internal error")
 		return
+	}
+
+	// fetch entitlements synchronously so they're in the DB before the client calls /auth/register
+	// skip if any entid is already set. user can hit Refresh Licenses to pick up new purchases
+	var dummy string
+	if s.db.QueryRow(
+		"SELECT account_id FROM accounts WHERE ea_pid = ? AND (entid_gw1 != '' OR entid_gw2 != '' OR entid_bfn != '')",
+		pid,
+	).Scan(&dummy) != nil {
+		entids, err := ea.FetchGameEntitlements(eaToken)
+		if err != nil {
+			log.Printf("[auth] entitlements fetch failed for %s: %v", pid, err)
+		} else {
+			gw1 := entids["PVZGWPC"]
+			gw2 := entids["PVZGW2PC"]
+			bfn := entids["PVZGW3PC"]
+			if gw1 != "" || gw2 != "" || bfn != "" {
+				s.db.Exec(
+					"UPDATE accounts SET entid_gw1 = CASE WHEN ? != '' THEN ? ELSE entid_gw1 END, entid_gw2 = CASE WHEN ? != '' THEN ? ELSE entid_gw2 END, entid_bfn = CASE WHEN ? != '' THEN ? ELSE entid_bfn END WHERE ea_pid = ?",
+					gw1, gw1, gw2, gw2, bfn, bfn, pid,
+				)
+				log.Printf("[auth] entitlements updated for ea_pid=%s gw1=%s gw2=%s bfn=%s", pid, gw1, gw2, bfn)
+			}
+		}
 	}
 
 	// create session
@@ -463,6 +488,80 @@ func (s *masterState) handleValidateTicket(w http.ResponseWriter, r *http.Reques
 		"displayName": payload.DisplayName,
 		"banned":      banned != 0,
 	})
+}
+
+// POST /auth/refresh-entitlements, re-fetch EA entitlements and update account + reissue JWT
+func (s *masterState) handleRefreshEntitlements(w http.ResponseWriter, r *http.Request) {
+	ip := getRealIP(r, s.behindProxy)
+	if !s.rl.check(ip, "refresh_entitlements", 5, 60*time.Second) {
+		errResp(w, 429, "Rate limited")
+		return
+	}
+
+	pid, _, ok := s.validatePlayerSession(r)
+	if !ok {
+		errResp(w, 401, "Not authenticated")
+		return
+	}
+
+	data, err := readJSON(r, maxBodySize)
+	if err != nil {
+		errResp(w, 400, "Invalid JSON")
+		return
+	}
+
+	eaToken := getString(data, "ea_token")
+	if eaToken == "" {
+		errResp(w, 400, "ea_token required")
+		return
+	}
+
+	entids, err := ea.FetchGameEntitlements(eaToken)
+	if err != nil {
+		errResp(w, 502, fmt.Sprintf("EA entitlements failed: %v", err))
+		return
+	}
+
+	gw1 := entids["PVZGWPC"]
+	gw2 := entids["PVZGW2PC"]
+	bfn := entids["PVZGW3PC"]
+
+	s.db.Exec(
+		"UPDATE accounts SET entid_gw1 = CASE WHEN ? != '' THEN ? ELSE entid_gw1 END, entid_gw2 = CASE WHEN ? != '' THEN ? ELSE entid_gw2 END, entid_bfn = CASE WHEN ? != '' THEN ? ELSE entid_bfn END WHERE ea_pid = ?",
+		gw1, gw1, gw2, gw2, bfn, bfn, pid,
+	)
+
+	log.Printf("[auth] refresh-entitlements: pid=%s gw1=%s gw2=%s bfn=%s", pid, gw1, gw2, bfn)
+
+	// reissue JWT if this ea_pid has a linked identity
+	var accountID, username, nickname, pubKeyHex, eaPID, eaName string
+	err = s.db.QueryRow(
+		"SELECT account_id, username, nickname, public_key, ea_pid, ea_name FROM accounts WHERE ea_pid = ?", pid,
+	).Scan(&accountID, &username, &nickname, &pubKeyHex, &eaPID, &eaName)
+	if err != nil {
+		jsonResp(w, 200, map[string]any{"ok": true, "jwt": nil})
+		return
+	}
+
+	entidsNew := s.loadEntids(accountID)
+	pubKeyBytes, _ := hex.DecodeString(pubKeyHex)
+	pubKey := ed25519.PublicKey(pubKeyBytes)
+	claims := JWTClaims{
+		Sub:           accountID,
+		Username:      username,
+		Nickname:      nickname,
+		PKFingerprint: pkFingerprint(pubKey),
+		EAPID:         eaPID,
+		EAName:        eaName,
+		EntidGW1:      entidsNew[0],
+		EntidGW2:      entidsNew[1],
+		EntidBFN:      entidsNew[2],
+		Iat:           time.Now().Unix(),
+		Exp:           time.Now().Add(jwtExpiry).Unix(),
+	}
+	jwt := issueJWT(s.signingKey, claims)
+
+	jsonResp(w, 200, map[string]any{"ok": true, "jwt": jwt})
 }
 
 func getOrCreateTicketSecret() ([]byte, error) {

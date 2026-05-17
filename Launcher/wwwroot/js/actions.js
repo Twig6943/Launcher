@@ -109,8 +109,8 @@ function doStartServer() {
     const lsOverrides = getLoadscreenOverrides();
     // ensure relay address is set when EU relay is on
     var euChecked = document.getElementById('hostUseEuRelay');
-    if (euChecked && euChecked.checked && !document.getElementById('hostRelayAddress').value) {
-        document.getElementById('hostRelayAddress').value = 'relay.v0e.dev:25200';
+    if (!document.getElementById('hostRelayAddress').value && _hostRelayRegion !== 'off') {
+        document.getElementById('hostRelayAddress').value = RELAY_SERVERS[_hostRelayRegion] || RELAY_SERVERS.na;
     }
     send('startServer', {
         deviceIP: document.getElementById('deviceIP').value,
@@ -175,17 +175,14 @@ function loadUserData(data) {
     if (data.serverPassword !== undefined) document.getElementById('serverPassword').value = data.serverPassword;
     if (data.gameDir) setGameDir(data.gameDir);
     if (data.deviceIP !== undefined) document.getElementById('deviceIP').value = data.deviceIP;
+    if (data.relayServers && typeof applyRelayServersConfig === 'function')
+        applyRelayServersConfig(data.relayServers);
     if (data.hostConnectionMode !== undefined) {
-        document.getElementById('hostRelayMode').value = normalizeConnectionMode(data.hostConnectionMode);
-        var isRelay = normalizeConnectionMode(data.hostConnectionMode) === 'Relay';
-        var euToggle = document.getElementById('hostUseEuRelay');
-        if (euToggle) euToggle.checked = isRelay;
+        var restoredMode = normalizeConnectionMode(data.hostConnectionMode);
+        document.getElementById('hostRelayMode').value = restoredMode;
     }
     if (data.hostRelayPreset !== undefined) document.getElementById('hostRelayPreset').value = data.hostRelayPreset;
     if (data.hostRelayAddress !== undefined) document.getElementById('hostRelayAddress').value = data.hostRelayAddress;
-    // if eu relay is on, force the canonical address so stale saved values don't stick
-    var euToggleEl = document.getElementById('hostUseEuRelay');
-    if (euToggleEl && euToggleEl.checked) document.getElementById('hostRelayAddress').value = 'relay.v0e.dev:25200';
     if (data.hostRelayKey !== undefined) document.getElementById('hostRelayKey').value = data.hostRelayKey;
     if (data.hostRelayServerName !== undefined) document.getElementById('hostRelayServerName').value = data.hostRelayServerName;
     if (data.hostRelayJoinLink !== undefined) document.getElementById('hostRelayJoinLink').value = data.hostRelayJoinLink;

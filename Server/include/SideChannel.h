@@ -41,6 +41,7 @@ namespace Cypress
 		std::string identityUsername;
 		std::string identityNickname;
 		std::string eaPid;
+		std::string entid; // game specific ONLINE_ACCESS entitlement id
 		bool identityVerified = false;
 		bool pendingIdentity = false; // waiting for identity proof before sending authResult
 		bool pendingClaimMod = false; // deferred mod claim until identity completes
