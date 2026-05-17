@@ -29,6 +29,13 @@ namespace fb
         }
 #endif
 
+        void kick(SecureReason reason, const eastl::string& reasonText)
+        {
+            m_shouldDisconnect = true;
+            m_disconnectReason = reason;
+            m_reasonText = reasonText;
+        }
+
 #ifdef CYPRESS_BFN
         char pad_0A10[0xA10];
         eastl::string m_machineId;

@@ -89,8 +89,8 @@ DEFINE_HOOK(
                 g_program->GetServer()->GetAnticheat()->AC_LogMessage(LogLevel::Info, "{}{}", HasFlag(result.flags, ValidationFlag::InvalidUpgrade) ? ">> " : "", upgradeName);
             }
         }
-        eastl::string reasonText("Invalid loadout");
-        player->disconnect(fb::SecureReason::SecureReason_KickedOut, reasonText);
+
+        player->disconnect(fb::SecureReason::SecureReason_KickedOut, "Invalid loadout");
     }
 
     return Orig_fb_PVZSpawnManager_spawnOnSpawnPoint(player, serverCharacterEntity);

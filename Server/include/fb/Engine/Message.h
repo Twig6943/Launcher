@@ -52,8 +52,8 @@ namespace fb
 
 		virtual ~Message() {}
 
-		bool is(const char* messageName) {
-			return m_type == fnvHash(messageName);
+		bool IsMsgType(int msgTypeHash) {
+			return m_type == msgTypeHash;
 		}
 	};
 	static_assert(sizeof(Message) == 0x30);

@@ -1,18 +1,32 @@
 #pragma once
 #include <format>
 #include <string>
+#include <EASTL/string.h>
 
 //simple macro to add setter getter and bool
 #define AC_ADD_FEATURE(name, defaultValue) \
 private: \
     bool name = defaultValue; \
 public: \
-    bool Get##name() const { return name; } \
+    bool Get##name() { return name; } \
     void Set##name(bool value) { name = value; }
+
+namespace fb
+{
+	class ServerPlayer;
+	class NetworkableMessage;
+}
 
 class Anticheat
 {
 public:
+	enum ValidationResult
+	{
+		InvalidDiscard,
+		InvalidKick,
+		Valid
+	};
+
 	static Anticheat& getInstance()
 	{
 		static Anticheat anticheat_instance;
@@ -65,6 +79,9 @@ public:
 		CYPRESS_LOGTOSERVER(level, "{}",str.c_str());
 		CYPRESS_LOGMESSAGE(level, "{}",str.c_str());
 	}
+
+	static const char* GetPlayerName(fb::ServerPlayer* player);
+	ValidationResult ValidateNetworkableMessage(fb::NetworkableMessage* inMsg, eastl::string* outReasonString);
 
 private:
 	Anticheat() = default;

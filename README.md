@@ -69,6 +69,14 @@ Each game has its own configuration via preprocessor defines (`CYPRESS_GW1`, `CY
 ## Project Structure
 
 ```
+Container/                  # Container related files for hosting
+Docs/                       # Hosting/joining/playlist guides
+Launcher/
+  Assets/                   # Assets (images, fonts) used in the launcher
+  CypressLauncher/          # C# backend (Photino.NET, .NET 8)
+  wwwroot/                  # Frontend (HTML/CSS/JS)
+  Server/                   # C++ server DLL injected into the game
+  tools/                    # rceedit
 Server/
   Source/
     Examples/               # launch script templates
@@ -95,13 +103,6 @@ Server/
     Kyber/                  # socket management (from KYBER project)
     MinHook/                # runtime function hooking
     fb/                     # reverse-engineered Frostbite engine types
-Launcher/
-  Assets/                   # Assets (images, fonts) used in the launcher
-  CypressLauncher/          # C# backend (Photino.NET, .NET 8)
-  wwwroot/                  # Frontend (HTML/CSS/JS)
-  Server/                   # C++ server DLL injected into the game
-  tools/                    # rceedit
-  Docs/                     # Hosting/joining/playlist guides
 tools/
   cypress-servers/          # Master server, relay server (Go)
 ```
