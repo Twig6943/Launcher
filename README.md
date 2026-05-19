@@ -72,7 +72,7 @@ Each game has its own configuration via preprocessor defines (`CYPRESS_GW1`, `CY
 Container/                  # Container related files for hosting
 Docs/                       # Hosting/joining/playlist guides
 Launcher/
-  Assets/                   # Assets (images, fonts) used in the launcher
+  Assets/                   # Assets (images, fonts, translations) used in the launcher
   CypressLauncher/          # C# backend (Photino.NET, .NET 8)
   wwwroot/                  # Frontend (HTML/CSS/JS)
   Server/                   # C++ server DLL injected into the game
